@@ -1,0 +1,98 @@
+{
+	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
+	"extends": ["config:recommended"],
+	"dependencyDashboard": true,
+	"semanticCommits": "enabled",
+	"automerge": false,
+	"prConcurrentLimit": 3,
+	"prHourlyLimit": 1,
+	"vulnerabilityAlerts": {
+		"enabled": true
+	},
+	"packageRules": [
+		{
+			"matchCategories": ["docker"],
+			"pinDigests": true
+		},
+		{
+			"matchUpdateTypes": ["major"],
+			"dependencyDashboardApproval": true
+		},
+		{
+			"matchPackageNames": [
+				"coder/code-server",
+				"code-server-linux-amd64",
+				"code-server-linux-arm64"
+			],
+			"groupName": "code-server"
+		},
+		{
+			"matchDatasources": ["deb"],
+			"registryUrls": [
+				"https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64",
+				"https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=arm64"
+			],
+			"versioning": "deb"
+		}
+	],
+	"customManagers": [
+		{
+			"customType": "regex",
+			"managerFilePatterns": ["/^Dockerfile$/"],
+			"matchStrings": [
+				"#\\s*renovate:\\s*suite=(?<suite>\\S+)\\s+depName=(?<depName>\\S+)\\s*\\n\\s*ARG\\s+[^=]+=(?<currentValue>\\S+)"
+			],
+			"datasourceTemplate": "deb",
+			"registryUrlTemplate": "https://deb.debian.org/debian?suite={{{suite}}}&components=main&binaryArch=amd64"
+		},
+		{
+			"customType": "regex",
+			"managerFilePatterns": ["/^Dockerfile$/"],
+			"matchStrings": [
+				"#\\s*renovate:\\s*datasource=custom.code-server-tags\\s+depName=(?<depName>\\S+)\\s+versioning=semver\\s*\\n\\s*ARG\\s+CODE_SERVER_VERSION=(?<currentValue>\\S+)\\s*\\n\\s*ARG\\s+CODE_SERVER_COMMIT=(?<currentDigest>[a-f0-9]{40})"
+			],
+			"datasourceTemplate": "custom.code-server-tags"
+		},
+		{
+			"customType": "regex",
+			"managerFilePatterns": ["/^Dockerfile$/"],
+			"matchStrings": [
+				"#\\s*renovate:\\s*datasource=custom.code-server-linux-amd64\\s+depName=(?<depName>\\S+)\\s+versioning=semver\\s*\\n#\\s*code-server-linux-amd64\\s+version=(?<currentValue>\\S+)\\s*\\nARG\\s+CODE_SERVER_SHA256_AMD64=(?<currentDigest>[a-f0-9]{64})"
+			],
+			"datasourceTemplate": "custom.code-server-linux-amd64",
+			"autoReplaceStringTemplate": "# renovate: datasource=custom.code-server-linux-amd64 depName={{{depName}}} versioning=semver\n# code-server-linux-amd64 version={{{newValue}}}\nARG CODE_SERVER_SHA256_AMD64={{{newDigest}}}"
+		},
+		{
+			"customType": "regex",
+			"managerFilePatterns": ["/^Dockerfile$/"],
+			"matchStrings": [
+				"#\\s*renovate:\\s*datasource=custom.code-server-linux-arm64\\s+depName=(?<depName>\\S+)\\s+versioning=semver\\s*\\n#\\s*code-server-linux-arm64\\s+version=(?<currentValue>\\S+)\\s*\\nARG\\s+CODE_SERVER_SHA256_ARM64=(?<currentDigest>[a-f0-9]{64})"
+			],
+			"datasourceTemplate": "custom.code-server-linux-arm64",
+			"autoReplaceStringTemplate": "# renovate: datasource=custom.code-server-linux-arm64 depName={{{depName}}} versioning=semver\n# code-server-linux-arm64 version={{{newValue}}}\nARG CODE_SERVER_SHA256_ARM64={{{newDigest}}}"
+		}
+	],
+	"customDatasources": {
+		"code-server-tags": {
+			"defaultRegistryUrlTemplate": "https://api.github.com/repos/coder/code-server/tags",
+			"format": "json",
+			"transformTemplates": [
+				"{\"releases\": $map($, function($v) { {\"version\": $replace($v.name, /^v/, \"\"), \"digest\": $v.commit.sha} }), \"sourceUrl\": \"https://github.com/coder/code-server\"}"
+			]
+		},
+		"code-server-linux-amd64": {
+			"defaultRegistryUrlTemplate": "https://api.github.com/repos/coder/code-server/releases",
+			"format": "json",
+			"transformTemplates": [
+				"{\"releases\": $map($, function($v) { {\"version\": $replace($v.tag_name, /^v/, \"\"), \"digest\": $replace($filter($v.assets, function($a) { $a.name = \"code-server-\" & $replace($v.tag_name, /^v/, \"\") & \"-linux-amd64.tar.gz\" })[0].digest, /^sha256:/, \"\"), \"sourceUrl\": $v.html_url} })}"
+			]
+		},
+		"code-server-linux-arm64": {
+			"defaultRegistryUrlTemplate": "https://api.github.com/repos/coder/code-server/releases",
+			"format": "json",
+			"transformTemplates": [
+				"{\"releases\": $map($, function($v) { {\"version\": $replace($v.tag_name, /^v/, \"\"), \"digest\": $replace($filter($v.assets, function($a) { $a.name = \"code-server-\" & $replace($v.tag_name, /^v/, \"\") & \"-linux-arm64.tar.gz\" })[0].digest, /^sha256:/, \"\"), \"sourceUrl\": $v.html_url} })}"
+			]
+		}
+	}
+}

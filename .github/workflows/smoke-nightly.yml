@@ -1,0 +1,16 @@
+name: smoke nightly
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  smoke:
+    uses: ./.github/workflows/smoke.yml
+    with:
+      no_cache: true

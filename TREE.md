@@ -1,0 +1,93 @@
+# Tree
+
+> Run `pnpm fix` to regenerate.
+
+```text
+.agents/
+  skills/
+    dependencies/
+      SKILL.md
+    grill/
+      SKILL.md
+  AGENTS.md
+.github/
+  workflows/
+    ci.yml
+    release.yml
+    smoke-nightly.yml
+    smoke.yml
+.husky/
+  pre-commit
+.vscode/
+  extensions.json
+rootfs/
+  etc/
+    sudoers.d/
+      user
+    supervisor/
+      conf.d/
+        agentbox.conf
+      supervisord.conf
+    xdg/
+      mimeapps.list
+    mailcap
+  home/
+    user/
+      .config/
+        user-dirs.dirs
+      .local/
+        share/
+          code-server/
+            User/
+              settings.json
+      Desktop/
+        .gitkeep
+      Documents/
+        .gitkeep
+      Downloads/
+        .gitkeep
+      Music/
+        .gitkeep
+      Pictures/
+        .gitkeep
+      Videos/
+        .gitkeep
+      .bashrc
+  opt/
+    agentbox/
+      services/
+        code-server.sh
+        entrypoint.sh
+      config.ts
+      gateway.ts
+      rootfs.ts
+  usr/
+    share/
+      applications/
+        agentbox.desktop
+scripts/
+  format.mjs
+tests/
+  fixtures/
+    cert.pem
+    key.pem
+  config.test.ts
+  gateway.test.ts
+  rootfs.test.ts
+.dockerignore
+.editorconfig
+.gitattributes
+.gitignore
+.prettierignore
+compose.yml
+Dockerfile
+eslint.config.mjs
+package.json
+pnpm-lock.yaml
+renovate.json
+SECURITY.md
+TODO.md
+TREE.md
+tsconfig.json
+vitest.config.ts
+```

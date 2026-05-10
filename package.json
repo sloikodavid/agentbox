@@ -1,0 +1,27 @@
+{
+	"name": "agentbox",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@11.0.9",
+	"scripts": {
+		"dev": "docker compose up --build",
+		"prepare": "husky",
+		"check": "tsc --noEmit && vitest run --coverage && eslint . && node scripts/format.mjs --check && pnpm dlx --package renovate renovate-config-validator renovate.json",
+		"fix": "node scripts/format.mjs --write && eslint . --fix"
+	},
+	"prettier": {
+		"useTabs": true
+	},
+	"devDependencies": {
+		"@eslint/js": "10.0.1",
+		"@types/node": "25.6.2",
+		"@vitest/coverage-v8": "4.1.5",
+		"eslint": "10.3.0",
+		"husky": "9.1.7",
+		"prettier": "3.8.3",
+		"typescript": "6.0.3",
+		"typescript-eslint": "8.59.2",
+		"vitest": "4.1.5"
+	}
+}

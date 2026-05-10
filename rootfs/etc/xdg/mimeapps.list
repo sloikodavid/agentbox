@@ -1,0 +1,21 @@
+[Default Applications]
+inode/directory=agentbox.desktop
+text/plain=agentbox.desktop
+text/markdown=agentbox.desktop
+text/x-markdown=agentbox.desktop
+application/json=agentbox.desktop
+application/xml=agentbox.desktop
+text/xml=agentbox.desktop
+application/x-yaml=agentbox.desktop
+application/yaml=agentbox.desktop
+text/yaml=agentbox.desktop
+application/toml=agentbox.desktop
+application/x-toml=agentbox.desktop
+text/css=agentbox.desktop
+text/csv=agentbox.desktop
+text/html=agentbox.desktop
+text/javascript=agentbox.desktop
+application/sql=agentbox.desktop
+application/x-shellscript=agentbox.desktop
+text/x-shellscript=agentbox.desktop
+text/x-script.sh=agentbox.desktop

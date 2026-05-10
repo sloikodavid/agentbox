@@ -1,0 +1,30 @@
+services:
+  agentbox:
+    build:
+      context: .
+      args:
+        AGENTBOX_BUILD_REVISION: ${AGENTBOX_BUILD_REVISION:-unknown}
+        AGENTBOX_BUILD_SOURCE: ${AGENTBOX_BUILD_SOURCE:-https://github.com/sloikodavid/agentbox}
+        AGENTBOX_BUILD_VERSION: ${AGENTBOX_BUILD_VERSION:-unknown}
+    environment:
+      - PORT=${PORT:-8080}
+      - AGENTBOX_VOLUME_PATH=${AGENTBOX_VOLUME_PATH:-/data}
+      - TZ
+      - AGENTBOX_LISTEN_ADDRESS
+      - AGENTBOX_BASE_PATH
+      - AGENTBOX_HOST
+      - AGENTBOX_PROTOCOL
+      - AGENTBOX_URL
+      - AGENTBOX_PORT_TEMPLATE_URL
+      - AGENTBOX_PROXY_HOPS
+      - AGENTBOX_HEALTH_PATH
+      - AGENTBOX_ENABLE_METRICS
+      - AGENTBOX_SSL_KEY
+      - AGENTBOX_SSL_CERT
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+    volumes:
+      - mydata:${AGENTBOX_VOLUME_PATH:-/data}
+
+volumes:
+  mydata:
