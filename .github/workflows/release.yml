@@ -1,13 +1,12 @@
 name: release
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       ref:
-        description: Ref to publish as a preview
+        description: "Branch, tag, or commit SHA to publish. Use main for a stable release; anything else is a preview release."
         required: true
+        default: main
 
 permissions:
   contents: write
@@ -20,67 +19,131 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-          ref: ${{ inputs.ref || github.ref }}
-      - name: Validate release ref
+          ref: ${{ inputs.ref }}
+
+      - name: Plan release
+        id: plan
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/agentbox
+          REF_INPUT: ${{ inputs.ref }}
         run: |
           set -euo pipefail
+
           git fetch origin main --tags
-          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            tag="${GITHUB_REF_NAME}"
-            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
-            test "$(git rev-parse "$tag^{commit}")" = "$(git rev-parse origin/main)"
+
+          sha="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          package_version="$(node -p 'require("./package.json").version')"
+
+          if [[ ! "$package_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "package.json version must be plain semver (X.Y.Z). Got: $package_version" >&2
+            exit 1
           fi
-      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
-      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
+
+          main_sha="$(git rev-parse origin/main)"
+          if [[ "$REF_INPUT" == "main" && "$sha" == "$main_sha" ]]; then
+            tag="v$package_version"
+            if git rev-parse "$tag" >/dev/null 2>&1; then
+              echo "Release tag already exists: $tag" >&2
+              exit 1
+            fi
+
+            major_minor="${package_version%.*}"
+            build_version="$package_version"
+            trivy_exit_code="1"
+            is_stable="true"
+            {
+              echo "tags<<EOF"
+              echo "$IMAGE:$package_version"
+              echo "$IMAGE:$major_minor"
+              echo "$IMAGE:latest"
+              echo "$IMAGE:sha-$short_sha"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          else
+            safe_ref="$(printf '%s' "$REF_INPUT" | tr '/:@ ' '-' | tr -cd 'A-Za-z0-9_.-' | cut -c1-80)"
+            if [[ -z "$safe_ref" ]]; then
+              safe_ref="$short_sha"
+            fi
+
+            build_version="preview-$short_sha"
+            trivy_exit_code="0"
+            is_stable="false"
+            {
+              echo "tags<<EOF"
+              echo "$IMAGE:preview-$safe_ref"
+              echo "$IMAGE:sha-$short_sha"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo "build_version=$build_version"
+            echo "is_stable=$is_stable"
+            echo "release_tag=v$package_version"
+            echo "sha=$sha"
+            echo "short_sha=$short_sha"
+            echo "trivy_exit_code=$trivy_exit_code"
+            echo "version=$package_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+
+      - uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf
-        id: meta
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/agentbox
-          tags: |
-            type=sha,prefix=sha-
-            type=semver,pattern={{version}},enable=${{ github.event_name == 'push' }}
-            type=semver,pattern={{major}}.{{minor}},enable=${{ github.event_name == 'push' }}
-            type=raw,value=latest,enable=${{ github.event_name == 'push' }}
-      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         id: build
         with:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.plan.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=Agentbox
+            org.opencontainers.image.description=A persistent VPS-like Linux appliance with code-server in the browser.
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.plan.outputs.sha }}
+            org.opencontainers.image.version=${{ steps.plan.outputs.build_version }}
+            org.opencontainers.image.licenses=Apache-2.0
           sbom: true
           provenance: true
           build-args: |
-            AGENTBOX_VERSION=${{ github.ref_name }}
-            BUILD_REVISION=${{ github.sha }}
-            BUILD_SOURCE=${{ github.server_url }}/${{ github.repository }}
-      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+            AGENTBOX_BUILD_VERSION=${{ steps.plan.outputs.build_version }}
+            AGENTBOX_BUILD_REVISION=${{ steps.plan.outputs.sha }}
+            AGENTBOX_BUILD_SOURCE=${{ github.server_url }}/${{ github.repository }}
+
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           image-ref: ghcr.io/${{ github.repository_owner }}/agentbox@${{ steps.build.outputs.digest }}
           format: sarif
           output: trivy-results.sarif
-          severity: CRITICAL
-          exit-code: "1"
-      - uses: github/codeql-action/upload-sarif@5e316336eb4f107009e477d4bfbfff13d7250fae
-        if: always()
+          severity: CRITICAL,HIGH
+          exit-code: ${{ steps.plan.outputs.trivy_exit_code }}
+
+      - uses: github/codeql-action/upload-sarif@5e316336eb4f107009e477d4bfbfff13d7250fae # v4
+        if: always() && hashFiles('trivy-results.sarif') != ''
         with:
           sarif_file: trivy-results.sarif
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661
+
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-name: ghcr.io/${{ github.repository_owner }}/agentbox
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
-      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
-        if: github.event_name == 'push'
+
+      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        if: steps.plan.outputs.is_stable == 'true'
         with:
+          tag_name: ${{ steps.plan.outputs.release_tag }}
+          target_commitish: ${{ steps.plan.outputs.sha }}
+          generate_release_notes: true
           body: |
-            Image: `ghcr.io/${{ github.repository_owner }}/agentbox:${{ github.ref_name }}`
+            Image: `ghcr.io/${{ github.repository_owner }}/agentbox:${{ steps.plan.outputs.version }}`
             Digest: `${{ steps.build.outputs.digest }}`

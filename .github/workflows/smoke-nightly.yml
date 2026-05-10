@@ -1,4 +1,4 @@
-name: smoke nightly
+name: smoke-nightly
 
 on:
   schedule:

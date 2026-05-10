@@ -11,11 +11,17 @@
       SKILL.md
   AGENTS.md
 .github/
+  scripts/
+    smoke.sh
   workflows/
     ci.yml
+    cla.yml
     release.yml
     smoke-nightly.yml
     smoke.yml
+  CLA.md
+  PULL_REQUEST_TEMPLATE.md
+  RELEASE.md
 .husky/
   pre-commit
 .vscode/
@@ -82,6 +88,7 @@ tests/
 compose.yml
 Dockerfile
 eslint.config.mjs
+LICENSE.md
 package.json
 pnpm-lock.yaml
 renovate.json

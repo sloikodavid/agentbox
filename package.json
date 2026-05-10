@@ -2,6 +2,7 @@
 	"name": "agentbox",
 	"version": "0.1.0",
 	"private": true,
+	"license": "Apache-2.0",
 	"type": "module",
 	"packageManager": "pnpm@11.0.9",
 	"scripts": {

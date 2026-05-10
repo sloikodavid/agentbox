@@ -31,10 +31,6 @@ Ensure versions in the Dockerfile are stable, and renovate is properly set up to
 
 - UI mobile support.
 
-- Add a CLA.
-
-- Figure out releases, permissions, protections, etc.
-
 - Figure out the API including Shortcuts.
   - Copy URL button for shortcuts - uses a Webhook for command shortcuts and passes payload.
 

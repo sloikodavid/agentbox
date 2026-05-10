@@ -69,7 +69,7 @@ LABEL org.opencontainers.image.title="Agentbox" \
   org.opencontainers.image.source="${AGENTBOX_BUILD_SOURCE}" \
   org.opencontainers.image.revision="${AGENTBOX_BUILD_REVISION}" \
   org.opencontainers.image.version="${AGENTBOX_BUILD_VERSION}" \
-  org.opencontainers.image.licenses="MIT"
+  org.opencontainers.image.licenses="Apache-2.0"
 
 # renovate: suite=trixie depName=bash
 ARG BASH_VERSION=5.2.37-2+b8

@@ -19,100 +19,73 @@ permissions:
   contents: read
   security-events: write
 
+concurrency:
+  group: smoke-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   smoke:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: amd64
+            docker_platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: arm64
+            docker_platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    env:
+      CONTAINER_NAME: agentbox-smoke-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
+      CUSTOM_VOLUME_NAME: agentbox-smoke-custom-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
+      IMAGE_TAG: agentbox:smoke-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
+      TLS_VOLUME_NAME: agentbox-smoke-tls-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
+      VOLUME_NAME: agentbox-smoke-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
-      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
+          platforms: ${{ matrix.docker_platform }}
           load: true
-          tags: agentbox:smoke
+          tags: ${{ env.IMAGE_TAG }}
           provenance: false
           no-cache: ${{ inputs.no_cache || false }}
-      - name: Run smoke container
-        run: |
-          set -euo pipefail
-          docker volume create agentbox-smoke
-          docker volume create agentbox-smoke-custom
-          docker run -d --name agentbox-smoke -p 8080:8080 -e AGENTBOX_VOLUME_PATH=/data -v agentbox-smoke:/data agentbox:smoke
-          for i in $(seq 1 120); do
-            curl -fsS http://127.0.0.1:8080/healthz && break || sleep 1
-          done
-          for i in $(seq 1 180); do
-            curl -fsS http://127.0.0.1:8080/healthz/readiness && break || sleep 1
-          done
-          curl -fsS http://127.0.0.1:8080/ | grep -qi code-server
-          python3 - <<'PY'
-          import base64
-          import os
-          import socket
-
-          key = base64.b64encode(os.urandom(16)).decode()
-          request = (
-              "GET /healthz HTTP/1.1\r\n"
-              "Host: 127.0.0.1:8080\r\n"
-              "Upgrade: websocket\r\n"
-              "Connection: Upgrade\r\n"
-              f"Sec-WebSocket-Key: {key}\r\n"
-              "Sec-WebSocket-Version: 13\r\n\r\n"
-          )
-          with socket.create_connection(("127.0.0.1", 8080), timeout=5) as s:
-              s.sendall(request.encode("ascii"))
-              response = s.recv(4096).decode("latin1").lower()
-          assert "101 switching protocols" in response, response
-          assert "upgrade: websocket" in response, response
-          assert "connection: upgrade" in response, response
-          PY
-          docker exec agentbox-smoke sudo -u user sudo true
-          docker exec agentbox-smoke sudo -u user code --version
-          docker exec agentbox-smoke sudo -u user sh -lc 'printf hello > /home/user/Desktop/smoke.txt'
-          docker exec agentbox-smoke sh -lc 'printf persisted > /custom-persist && sleep 1'
-          docker exec agentbox-smoke sh -lc 'test -f /data/rootfs/files/custom-persist'
-          docker exec agentbox-smoke sh -lc 'rm /custom-persist && sleep 1 && test -f /data/rootfs/removed-files/custom-persist.__removed__'
-          docker restart agentbox-smoke
-          for i in $(seq 1 180); do
-            curl -fsS http://127.0.0.1:8080/healthz/readiness && break || sleep 1
-          done
-          docker exec agentbox-smoke sh -lc 'test ! -e /custom-persist'
-          docker rm -f agentbox-smoke
-          docker run -d --name agentbox-smoke \
-            -p 9090:9090 \
-            -e PORT=9090 \
-            -e AGENTBOX_BASE_PATH=/agentbox \
-            -e AGENTBOX_HEALTH_PATH=/status \
-            -e AGENTBOX_URL=https://example.com/agentbox \
-            -e AGENTBOX_VOLUME_PATH=/persist \
-            -e AGENTBOX_ENABLE_METRICS=1 \
-            -e 'AGENTBOX_PORT_TEMPLATE_URL=https://{{port}}.ports.example.com' \
-            -v agentbox-smoke-custom:/persist \
-            agentbox:smoke
-          for i in $(seq 1 180); do
-            curl -fsS http://127.0.0.1:9090/agentbox/status/readiness && break || sleep 1
-          done
-          curl -fsS http://127.0.0.1:9090/agentbox/status | grep -q '"ready":true'
-          curl -fsS http://127.0.0.1:9090/agentbox/metrics | grep -q 'agentbox_ready 1'
-          curl -fsS http://127.0.0.1:9090/agentbox/ | grep -qi code-server
-          docker exec agentbox-smoke sh -lc 'pgrep -af code-server | grep -- "--proxy-domain ports.example.com"'
-          docker exec agentbox-smoke sh -lc 'tr "\0" "\n" < "/proc/$(pgrep -u user -f /usr/local/bin/code-server)/environ" | grep -F "VSCODE_PROXY_URI=https://{{port}}.ports.example.com"'
-          docker exec agentbox-smoke sh -lc 'printf custom > /custom-volume-path && sleep 1'
-          docker exec agentbox-smoke sh -lc 'test -f /persist/rootfs/files/custom-volume-path'
-      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8
+      - name: Run smoke suite
+        timeout-minutes: 25
+        run: bash .github/scripts/smoke.sh
+      - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        if: matrix.platform == 'amd64'
         with:
-          image-ref: agentbox:smoke
+          image-ref: ${{ env.IMAGE_TAG }}
           format: sarif
           output: trivy-results.sarif
-          severity: CRITICAL
-          exit-code: "1"
-      - uses: github/codeql-action/upload-sarif@5e316336eb4f107009e477d4bfbfff13d7250fae
-        if: always()
+          severity: CRITICAL,HIGH
+          # Smoke uploads image findings to code scanning. release.yml is the
+          # blocking vulnerability gate for stable releases.
+          exit-code: "0"
+      - uses: github/codeql-action/upload-sarif@5e316336eb4f107009e477d4bfbfff13d7250fae # v4
+        if: >-
+          always() &&
+          matrix.platform == 'amd64' &&
+          hashFiles('trivy-results.sarif') != '' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           sarif_file: trivy-results.sarif
+      - name: Debug Docker state
+        if: failure()
+        run: |
+          docker ps -a || true
+          docker logs "$CONTAINER_NAME" || true
       - name: Cleanup
         if: always()
         run: |
-          docker rm -f agentbox-smoke || true
-          docker volume rm agentbox-smoke || true
-          docker volume rm agentbox-smoke-custom || true
+          docker rm -f "$CONTAINER_NAME" || true
+          docker volume rm "$VOLUME_NAME" || true
+          docker volume rm "$CUSTOM_VOLUME_NAME" || true
+          docker volume rm "$TLS_VOLUME_NAME" || true
+          docker image rm "$IMAGE_TAG" || true
