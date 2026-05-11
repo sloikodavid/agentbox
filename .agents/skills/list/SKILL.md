@@ -1,13 +1,20 @@
-# Tree
+---
+name: list
+description: Use when you're not sure where to look, need to find the right file, or need to understand the project structure in a token-efficient list format. Saves the user time and money.
+---
 
-> Run `pnpm fix` to regenerate.
+> Run `pnpm fix` to regenerate this file - do not edit manually.
 
 ```text
 .agents/
   skills/
-    dependencies/
-      SKILL.md
     grill/
+      SKILL.md
+    list/
+      SKILL.md
+    refactor/
+      SKILL.md
+    research/
       SKILL.md
   AGENTS.md
 .github/
@@ -89,6 +96,7 @@ tests/
 .gitattributes
 .gitignore
 .prettierignore
+CHANGELOG.md
 compose.yml
 Dockerfile
 eslint.config.mjs
@@ -98,7 +106,6 @@ pnpm-lock.yaml
 renovate.json
 SECURITY.md
 TODO.md
-TREE.md
 tsconfig.json
 vitest.config.ts
 ```

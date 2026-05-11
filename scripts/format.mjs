@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,7 @@ const hasUnknownArg = process.argv
 	.slice(2)
 	.some((arg) => !ALLOWED_ARGS.has(arg));
 const check = !write && (args.size === 0 || explicitCheck);
-const TREE_OUTPUT_FILE = "TREE.md";
+const LIST_OUTPUT_FILE = ".agents/skills/list/SKILL.md";
 const IGNORE_PATH = [
 	join(REPO_ROOT, ".gitignore"),
 	join(REPO_ROOT, ".prettierignore"),
@@ -68,7 +68,7 @@ function gitFiles() {
 		.split("\0")
 		.filter(Boolean)
 		.filter(
-			(path) => path !== TREE_OUTPUT_FILE && existsSync(join(REPO_ROOT, path)),
+			(path) => path !== LIST_OUTPUT_FILE && existsSync(join(REPO_ROOT, path)),
 		);
 }
 
@@ -82,20 +82,20 @@ async function checkedFiles() {
 	const files = [];
 	for (const path of gitFiles()) {
 		const file = join(REPO_ROOT, path);
-		const info = await prettier.getFileInfo(file, { IGNORE_PATH });
+		const info = await prettier.getFileInfo(file, { ignorePath: IGNORE_PATH });
 		if (!info.ignored) files.push({ file, parser: info.inferredParser });
 	}
 	return files;
 }
 
-function renderTree() {
+function renderList() {
 	const root = {
 		children: new Map(),
 		name: basename(REPO_ROOT),
 		type: "directory",
 	};
 
-	for (const path of [...gitFiles(), TREE_OUTPUT_FILE]) {
+	for (const path of [...gitFiles(), LIST_OUTPUT_FILE]) {
 		const parts = path.split("/").filter(Boolean);
 		let current = root;
 		for (const [index, name] of parts.entries()) {
@@ -127,9 +127,12 @@ function renderTree() {
 	}
 
 	return [
-		"# Tree",
+		"---",
+		"name: list",
+		"description: Use when you're not sure where to look, need to find the right file, or need to understand the project structure in a token-efficient list format. Saves the user time and money.",
+		"---",
 		"",
-		"> Run `pnpm fix` to regenerate.",
+		"> Run `pnpm fix` to regenerate this file - do not edit manually.",
 		"",
 		"```text",
 		...renderNode(root),
@@ -138,16 +141,17 @@ function renderTree() {
 	].join("\n");
 }
 
-function runTree({ write }) {
-	const file = join(REPO_ROOT, TREE_OUTPUT_FILE);
-	const expected = renderTree();
+function runList({ write }) {
+	const file = join(REPO_ROOT, LIST_OUTPUT_FILE);
+	const expected = renderList();
 	const actual = existsSync(file) ? readFileSync(file, "utf8") : "";
 	if (actual === expected) return true;
 	if (write) {
+		mkdirSync(dirname(file), { recursive: true });
 		writeFileSync(file, expected);
 		return true;
 	}
-	console.error(`${TREE_OUTPUT_FILE} is out of date. Run 'pnpm fix'.`);
+	console.error(`${LIST_OUTPUT_FILE} is out of date. Run 'pnpm fix'.`);
 	return false;
 }
 
@@ -245,7 +249,7 @@ function runPrettier({ write }) {
 
 async function runAll({ write }) {
 	const results = [
-		runTree({ write }),
+		runList({ write }),
 		await runLlmCharacters({ write }),
 		await runListPeriods({ write }),
 		runPrettier({ write }),
