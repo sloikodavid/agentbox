@@ -13,4 +13,4 @@ Grill the user until you both reach a shared understanding and the important dec
 - Ask the questions one at a time, waiting for feedback on each question before continuing.
 - If a question can be answered by exploring the codebase, explore the codebase instead.
 - Upon asking each question, briefly mention what's still left to grill.
-  > There are NO bad questions - whether something is incredibly low OR high level, letting the user have a say matters.
+  > There are NO bad questions - regardless of if something is incredibly low OR high level, allow the user to flesh out their opinion **by asking.**
