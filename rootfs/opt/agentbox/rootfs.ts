@@ -6,7 +6,8 @@ import {
 	lstat,
 	lutimes,
 	mkdir,
-	open,
+	chmod,
+	readdir,
 	readlink,
 	rename,
 	rm,
@@ -17,7 +18,7 @@ import {
 	watch,
 	writeFile,
 } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawn } from "node:child_process";
 import { parseConfig } from "./config.ts";
 
@@ -25,11 +26,31 @@ export const REMOVAL_SUFFIX = ".__removed__";
 export const ROOTFS_HEARTBEAT_PATH = "/run/agentbox/rootfs.ready";
 export const ROOTFS_HEARTBEAT_INTERVAL_MS = 5_000;
 export const ROOTFS_HEARTBEAT_MAX_AGE_MS = 15_000;
-export const EVENT_BATCH_WINDOW_MS = 200;
+export const ROOTFS_RECONCILE_INTERVAL_MS = 1_000;
+export const ROOTFS_EVENT_BATCH_WINDOW_MS = 200;
+
+const WATCHED_ROOT_DIRECTORIES = [
+	"/bin",
+	"/boot",
+	"/etc",
+	"/home",
+	"/lib",
+	"/lib64",
+	"/media",
+	"/mnt",
+	"/opt",
+	"/root",
+	"/sbin",
+	"/srv",
+	"/usr",
+	"/var",
+];
 
 export interface RootfsOptions {
 	readonly volumePath?: string;
 	readonly rootPath?: string;
+	readonly heartbeatPath?: string;
+	readonly watchSystemPaths?: boolean;
 }
 
 export interface RootfsPaths {
@@ -57,7 +78,9 @@ interface QueuedEvent {
 const hardlinks = new Map<string, string>();
 
 export function rootfsPaths(options: RootfsOptions = {}): RootfsPaths {
-	const volumePath = options.volumePath ?? parseConfig().volumePath;
+	const volumePath =
+		options.volumePath ??
+		parseConfig(process.env, { loadTlsFiles: false }).volumePath;
 	return {
 		rootPath: options.rootPath ?? "/",
 		filesPath: join(volumePath, "rootfs", "files"),
@@ -94,15 +117,22 @@ export async function watchRootfs(
 	options: RootfsOptions = {},
 ): Promise<() => Promise<void>> {
 	const paths = rootfsPaths(options);
+	const heartbeatPath = options.heartbeatPath ?? ROOTFS_HEARTBEAT_PATH;
+	const watchedRootDirectories =
+		(options.watchSystemPaths ?? paths.rootPath === "/")
+			? WATCHED_ROOT_DIRECTORIES
+			: [];
 	await mkdir(paths.filesPath, { recursive: true });
 	await mkdir(paths.removedFilesPath, { recursive: true });
-	await mkdir(dirname(ROOTFS_HEARTBEAT_PATH), { recursive: true });
+	await mkdir(dirname(heartbeatPath), { recursive: true });
 
 	const queue = new Map<string, QueuedEvent>();
 	const watchers: AsyncDisposable[] = [];
 	const watcherFailures: RootfsWatcherFailure[] = [];
 	let timer: NodeJS.Timeout | undefined;
 	let heartbeatTimer: NodeJS.Timeout | undefined;
+	let rootReconcileTimer: NodeJS.Timeout | undefined;
+	let rootEntrySnapshot = new Set<string>();
 	let stopping = false;
 
 	const beat = async (): Promise<void> => {
@@ -111,9 +141,9 @@ export async function watchRootfs(
 			watcherCount: watchers.length,
 			failedWatchers: watcherFailures,
 		};
-		const tempPath = `${ROOTFS_HEARTBEAT_PATH}.${process.pid}.tmp`;
+		const tempPath = `${heartbeatPath}.${process.pid}.tmp`;
 		await writeFile(tempPath, `${JSON.stringify(heartbeat)}\n`);
-		await rename(tempPath, ROOTFS_HEARTBEAT_PATH);
+		await rename(tempPath, heartbeatPath);
 	};
 
 	const flush = async (): Promise<void> => {
@@ -141,10 +171,24 @@ export async function watchRootfs(
 		queue.set(event.livePath, event);
 		timer ??= setTimeout(() => {
 			flush().catch((error: unknown) => log(`flush failed: ${String(error)}`));
-		}, EVENT_BATCH_WINDOW_MS);
+		}, ROOTFS_EVENT_BATCH_WINDOW_MS);
 	};
 
-	const watchDirectory = (livePath: string, recursive: boolean): void => {
+	const recordWatchFailure = (
+		livePath: string,
+		error: unknown,
+		required: boolean,
+	): void => {
+		const message = String(error);
+		if (required) watcherFailures.push({ path: livePath, message });
+		log(`watch failed for ${livePath}: ${message}`);
+	};
+
+	const watchDirectory = (
+		livePath: string,
+		recursive: boolean,
+		required = false,
+	): void => {
 		if (isExcludedPath(livePath, paths)) {
 			return;
 		}
@@ -168,38 +212,55 @@ export async function watchRootfs(
 					}
 				}
 			})().catch((error: unknown) => {
-				if (!stopping) {
-					const message = String(error);
-					watcherFailures.push({ path: livePath, message });
-					log(`watch failed for ${livePath}: ${message}`);
-				}
+				if (!stopping) recordWatchFailure(livePath, error, required);
 			});
 		} catch (error) {
-			const message = String(error);
-			watcherFailures.push({ path: livePath, message });
-			log(`could not watch ${livePath}: ${message}`);
+			recordWatchFailure(livePath, error, required);
 		}
 	};
 
-	watchDirectory(paths.rootPath, false);
-	for (const dir of [
-		"/bin",
-		"/boot",
-		"/etc",
-		"/home",
-		"/lib",
-		"/lib64",
-		"/media",
-		"/mnt",
-		"/opt",
-		"/root",
-		"/sbin",
-		"/srv",
-		"/usr",
-		"/var",
-	]) {
+	const reconcileRootEntries = async (
+		mode: "initial" | "changes",
+	): Promise<void> => {
+		const currentEntries = new Set<string>();
+		for (const entry of await readdir(paths.rootPath)) {
+			const livePath = resolve(paths.rootPath, entry);
+			if (isIgnoredRootEntry(livePath, paths, watchedRootDirectories)) {
+				continue;
+			}
+			currentEntries.add(livePath);
+			if (mode === "changes" && rootEntrySnapshot.has(livePath)) {
+				continue;
+			}
+			try {
+				const stats = await lstat(livePath);
+				schedule({ livePath, kind: "store" });
+				if (stats.isDirectory()) {
+					await queueRecursiveContents(livePath, schedule);
+				}
+			} catch {
+				schedule({ livePath, kind: "remove" });
+			}
+		}
+		for (const livePath of rootEntrySnapshot) {
+			if (!currentEntries.has(livePath)) {
+				schedule({ livePath, kind: "remove" });
+			}
+		}
+		rootEntrySnapshot = currentEntries;
+	};
+
+	watchDirectory(paths.rootPath, false, true);
+	for (const dir of watchedRootDirectories) {
 		watchDirectory(dir, true);
 	}
+	await reconcileRootEntries("initial");
+	rootReconcileTimer = setInterval(() => {
+		reconcileRootEntries("changes").catch((error: unknown) =>
+			log(`root reconcile failed: ${String(error)}`),
+		);
+	}, ROOTFS_RECONCILE_INTERVAL_MS);
+	rootReconcileTimer.unref();
 
 	await beat();
 	heartbeatTimer = setInterval(() => {
@@ -215,8 +276,17 @@ export async function watchRootfs(
 			clearInterval(heartbeatTimer);
 			heartbeatTimer = undefined;
 		}
-		for (const watcher of watchers) {
-			await watcher[Symbol.asyncDispose]();
+		if (rootReconcileTimer) {
+			clearInterval(rootReconcileTimer);
+			rootReconcileTimer = undefined;
+		}
+		const results = await Promise.allSettled(
+			watchers.map((watcher) => watcher[Symbol.asyncDispose]()),
+		);
+		for (const result of results) {
+			if (result.status === "rejected") {
+				log(`watch dispose failed: ${String(result.reason)}`);
+			}
 		}
 		await flush();
 	};
@@ -245,7 +315,7 @@ export async function storeAncestors(
 	let current = dirname(resolve(livePath));
 	const root = resolve(paths.rootPath);
 	const ancestors: string[] = [];
-	while (current !== root && current.startsWith(root)) {
+	while (current !== root && isWithinRoot(current, root)) {
 		ancestors.push(current);
 		current = dirname(current);
 	}
@@ -280,7 +350,7 @@ export async function unmarkRemoved(
 	const paths = rootfsPaths(options);
 	let current = resolve(livePath);
 	const root = resolve(paths.rootPath);
-	while (current !== root && current.startsWith(root)) {
+	while (current !== root && isWithinRoot(current, root)) {
 		await rm(removalMarkerForLivePath(current, paths), {
 			force: true,
 		});
@@ -321,14 +391,18 @@ export function isExcludedPath(
 	paths: RootfsPaths = rootfsPaths(),
 ): boolean {
 	const path = resolve(livePath);
+	const rootPath = resolve(paths.rootPath);
 	const volumePath = resolve(dirname(dirname(paths.filesPath)));
-	const excluded = [
-		"/",
+	if (path === rootPath) {
+		return true;
+	}
+	const rootRelativeExclusions = [
 		"/.dockerenv",
 		"/dev",
 		"/etc/hostname",
 		"/etc/hosts",
 		"/etc/resolv.conf",
+		"/etc/supervisor",
 		"/home/user/.cache",
 		"/home/user/.local/share/Trash",
 		"/opt/agentbox",
@@ -342,11 +416,28 @@ export function isExcludedPath(
 		"/var/lib/dpkg/lock-frontend",
 		"/var/lib/dpkg/triggers/Lock",
 		"/var/run",
-		volumePath,
-	].map((entry) => resolve(entry));
+	].map((entry) =>
+		entry === "/" ? rootPath : resolve(rootPath, entry.slice(1)),
+	);
+	const excluded = [...rootRelativeExclusions, volumePath];
 
 	return excluded.some(
 		(entry) => path === entry || path.startsWith(`${entry}${sep}`),
+	);
+}
+
+function isIgnoredRootEntry(
+	livePath: string,
+	paths: RootfsPaths,
+	watchedRootDirectories: readonly string[],
+): boolean {
+	const path = resolve(livePath);
+	const watchedRoots = watchedRootDirectories.map((entry) => resolve(entry));
+	return (
+		isExcludedPath(path, paths) ||
+		watchedRoots.some(
+			(entry) => path === entry || path.startsWith(`${entry}${sep}`),
+		)
 	);
 }
 
@@ -413,14 +504,18 @@ async function processRemove(
 	if (isExcludedPath(livePath, paths)) {
 		return;
 	}
-	await removeStoredPath(livePath, {
-		rootPath: paths.rootPath,
-		volumePath: dirname(dirname(paths.filesPath)),
-	});
-	await markRemoved(livePath, {
-		rootPath: paths.rootPath,
-		volumePath: dirname(dirname(paths.filesPath)),
-	});
+	try {
+		await removeStoredPath(livePath, {
+			rootPath: paths.rootPath,
+			volumePath: dirname(dirname(paths.filesPath)),
+		});
+		await markRemoved(livePath, {
+			rootPath: paths.rootPath,
+			volumePath: dirname(dirname(paths.filesPath)),
+		});
+	} catch (error) {
+		log(`remove failed for ${livePath}: ${String(error)}`);
+	}
 }
 
 async function applyRemovalMarkers(paths: RootfsPaths): Promise<void> {
@@ -446,7 +541,7 @@ async function storeAncestorMetadata(
 	let current = dirname(resolve(livePath));
 	const root = resolve(paths.rootPath);
 	const ancestors: string[] = [];
-	while (current !== root && current.startsWith(root)) {
+	while (current !== root && isWithinRoot(current, root)) {
 		ancestors.push(current);
 		current = dirname(current);
 	}
@@ -489,7 +584,6 @@ async function walk(
 	if (!stats.isDirectory()) {
 		return;
 	}
-	const { readdir } = await import("node:fs/promises");
 	for (const entry of await readdir(path)) {
 		await walk(join(path, entry), visitor);
 	}
@@ -500,20 +594,25 @@ async function copyFileConsistently(
 	destination: string,
 ): Promise<void> {
 	const temp = `${destination}.tmp-${process.pid}-${Date.now()}`;
-	for (let attempt = 0; attempt < 3; attempt += 1) {
-		const before = await lstat(source);
-		await copyFile(source, temp, constants.COPYFILE_FICLONE_FORCE).catch(
-			async () => {
-				await streamCopy(source, temp);
-			},
-		);
-		const after = await lstat(source);
-		if (before.size === after.size && before.mtimeMs === after.mtimeMs) {
-			await rename(temp, destination);
-			return;
+	try {
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			const before = await lstat(source);
+			await copyFile(source, temp, constants.COPYFILE_FICLONE_FORCE).catch(
+				async () => {
+					await streamCopy(source, temp);
+				},
+			);
+			const after = await lstat(source);
+			if (before.size === after.size && before.mtimeMs === after.mtimeMs) {
+				await rename(temp, destination);
+				return;
+			}
 		}
+		await rename(temp, destination);
+	} catch (error) {
+		await rm(temp, { force: true });
+		throw error;
 	}
-	await rename(temp, destination);
 }
 
 async function streamCopy(source: string, destination: string): Promise<void> {
@@ -540,9 +639,7 @@ async function copyMetadata(
 		return;
 	}
 	await chown(destination, stats.uid, stats.gid).catch(ignoreUnsupported);
-	await open(destination, "r")
-		.then((file) => file.chmod(stats.mode).finally(() => file.close()))
-		.catch(ignoreUnsupported);
+	await chmod(destination, stats.mode).catch(ignoreUnsupported);
 	await utimes(destination, stats.atime, stats.mtime).catch(ignoreUnsupported);
 }
 
@@ -565,10 +662,22 @@ function relativeFromRoot(livePath: string, paths: RootfsPaths): string {
 	const resolvedRoot = resolve(paths.rootPath);
 	const resolvedPath = resolve(livePath);
 	const relativePath = relative(resolvedRoot, resolvedPath);
-	if (relativePath.startsWith("..")) {
+	if (isOutsideRelativePath(relativePath)) {
 		throw new Error(`${livePath} is outside ${paths.rootPath}`);
 	}
 	return relativePath || ".";
+}
+
+function isWithinRoot(path: string, resolvedRoot: string): boolean {
+	return !isOutsideRelativePath(relative(resolvedRoot, resolve(path)));
+}
+
+function isOutsideRelativePath(relativePath: string): boolean {
+	return (
+		relativePath === ".." ||
+		relativePath.startsWith(`..${sep}`) ||
+		isAbsolute(relativePath)
+	);
 }
 
 async function run(command: string, args: readonly string[]): Promise<void> {
@@ -592,9 +701,15 @@ function log(message: string): void {
 if (import.meta.url === `file://${process.argv[1]}`) {
 	const mode = process.argv[2];
 	if (mode === "restore") {
-		await restoreRootfs();
+		await restoreRootfs().catch((error: unknown) => {
+			log(`restore failed: ${String(error)}`);
+			process.exit(1);
+		});
 	} else if (mode === "watch") {
-		await watchRootfs();
+		await watchRootfs().catch((error: unknown) => {
+			log(`watch failed: ${String(error)}`);
+			process.exit(1);
+		});
 	} else {
 		console.error("usage: node /opt/agentbox/rootfs.ts <restore|watch>");
 		process.exit(64);

@@ -17,14 +17,14 @@ import {
 } from "./rootfs.ts";
 
 export interface HealthCheck {
-	readonly name: "agentbox" | "code_server" | "rootfs";
+	readonly name: "code_server" | "rootfs";
 	readonly status: "pass" | "fail";
 	readonly message: string;
 }
 
 export interface HealthResponse {
 	readonly ready: boolean;
-	readonly status: "ok" | "starting" | "error";
+	readonly status: "ok" | "starting";
 	readonly checks: readonly HealthCheck[];
 	readonly readyAt: string | null;
 	readonly version: string;
@@ -92,14 +92,12 @@ export function createGateway(config = parseConfig()): Gateway {
 
 	async function startGateway(): Promise<void> {
 		await updateHealth();
+		await listen(server, config.port, config.bindAddress);
 		healthTimer = setInterval(() => {
 			updateHealth().catch((error: unknown) =>
 				log(`health update failed: ${String(error)}`),
 			);
 		}, 1_000);
-		await new Promise<void>((resolve) => {
-			server.listen(config.port, config.bindAddress, resolve);
-		});
 		log(`listening on ${config.bindAddress}:${config.port}`);
 	}
 
@@ -108,11 +106,13 @@ export function createGateway(config = parseConfig()): Gateway {
 			clearInterval(healthTimer);
 			healthTimer = undefined;
 		}
+		if (!server.listening) {
+			destroySockets();
+			return;
+		}
 		await new Promise<void>((resolve, reject) => {
 			server.close((error) => (error ? reject(error) : resolve()));
-			for (const socket of sockets) {
-				socket.destroy();
-			}
+			destroySockets();
 		});
 	}
 
@@ -127,27 +127,31 @@ export function createGateway(config = parseConfig()): Gateway {
 		};
 	}
 
+	function destroySockets(): void {
+		for (const socket of sockets) {
+			socket.destroy();
+		}
+	}
+
 	function handleRequest(
 		request: IncomingMessage,
 		response: ServerResponse,
 	): void {
 		try {
 			const url = parseRequestUrl(request);
-			const healthPath = joinUrlPath(config.basePath, "/healthz");
-			const metricsPath = joinUrlPath(config.basePath, "/metrics");
-			if (
-				url.pathname === healthPath ||
-				url.pathname === `${healthPath}/readiness`
-			) {
+			const healthUrlPath = joinUrlPath(config.publicUrlPath, "/healthz");
+			const readinessUrlPath = joinUrlPath(healthUrlPath, "/readiness");
+			const metricsUrlPath = joinUrlPath(config.publicUrlPath, "/metrics");
+			if (url.pathname === healthUrlPath || url.pathname === readinessUrlPath) {
 				sendJson(
 					response,
-					url.pathname === healthPath ? 200 : health().ready ? 200 : 503,
+					url.pathname === healthUrlPath ? 200 : health().ready ? 200 : 503,
 					health(),
 				);
 				return;
 			}
 
-			if (url.pathname === metricsPath) {
+			if (url.pathname === metricsUrlPath) {
 				if (!config.enableMetrics) {
 					sendText(response, 404, "not found\n");
 					return;
@@ -161,7 +165,7 @@ export function createGateway(config = parseConfig()): Gateway {
 				if (acceptsHtml(request)) {
 					sendStartingPage(
 						response,
-						joinUrlPath(config.basePath, "/healthz/readiness"),
+						joinUrlPath(config.publicUrlPath, "/healthz/readiness"),
 					);
 				} else {
 					sendText(response, 503, "Agentbox is starting\n");
@@ -192,24 +196,16 @@ export function createGateway(config = parseConfig()): Gateway {
 		}
 
 		const url = parseRequestUrl(request);
-		const portProxyHost = isPortProxyHost(config, request);
-		const proxiedPath = portProxyHost
-			? url.pathname
-			: stripPrefix(url.pathname, config.basePath);
-		if (proxiedPath === null) {
+		const target = proxyTarget(config, request, url);
+		if (!target) {
 			writeUpgradeError(socket, 404, "Not Found", "not found\n");
 			return;
 		}
-
-		const headers = filterHeaders(request.headers);
-		const forwarded = forwardedHeaders(config, request);
-		headers.host = String(forwarded["x-forwarded-host"]);
-		Object.assign(headers, forwarded);
-		headers.connection = "upgrade";
-		headers.upgrade = request.headers.upgrade ?? "websocket";
-		if (config.basePath !== "/" && !portProxyHost) {
-			headers["x-forwarded-prefix"] = config.basePath;
-		}
+		const headers = {
+			...target.headers,
+			connection: "upgrade",
+			upgrade: request.headers.upgrade ?? "websocket",
+		};
 		let settled = false;
 		const failUpgrade = (): void => {
 			if (settled) {
@@ -223,7 +219,7 @@ export function createGateway(config = parseConfig()): Gateway {
 			{
 				host: CODE_SERVER_TARGET.hostname,
 				port: Number(CODE_SERVER_TARGET.port),
-				path: `${proxiedPath}${url.search}`,
+				path: `${target.path}${url.search}`,
 				method: request.method,
 				headers,
 			},
@@ -284,15 +280,7 @@ export function createGateway(config = parseConfig()): Gateway {
 			checkCodeServer(),
 			checkRootfs(),
 		]);
-		return [
-			{
-				name: "agentbox",
-				status: "pass",
-				message: "Agentbox is accepting connections",
-			},
-			codeServer,
-			rootfs,
-		];
+		return [codeServer, rootfs];
 	}
 
 	return { config, server, startGateway, stopGateway, health };
@@ -386,6 +374,14 @@ async function checkRootfs(): Promise<HealthCheck> {
 				message: "rootfs store watcher is not running",
 			};
 		}
+		const failedWatcher = heartbeat.failedWatchers[0];
+		if (failedWatcher) {
+			return {
+				name: "rootfs",
+				status: "fail",
+				message: `rootfs store watcher failed for ${failedWatcher.path}`,
+			};
+		}
 		return {
 			name: "rootfs",
 			status: "pass",
@@ -428,17 +424,46 @@ function parseRequestUrl(request: IncomingMessage): URL {
 	return new URL(request.url ?? "/", "http://agentbox.internal");
 }
 
-function stripPrefix(pathname: string, prefix: string): string | null {
-	if (prefix === "/") {
+function stripPublicUrlPath(
+	pathname: string,
+	publicUrlPath: string,
+): string | null {
+	if (publicUrlPath === "/") {
 		return pathname;
 	}
-	if (pathname === prefix) {
+	if (pathname === publicUrlPath) {
 		return "/";
 	}
-	if (pathname.startsWith(`${prefix}/`)) {
-		return pathname.slice(prefix.length);
+	if (pathname.startsWith(`${publicUrlPath}/`)) {
+		return pathname.slice(publicUrlPath.length);
 	}
 	return null;
+}
+
+interface ProxyTarget {
+	readonly path: string;
+	readonly headers: Record<string, string | string[]>;
+}
+
+function proxyTarget(
+	config: AgentboxConfig,
+	request: IncomingMessage,
+	url: URL,
+): ProxyTarget | null {
+	const portProxyHost = isPortProxyHost(config, request);
+	const path = portProxyHost
+		? url.pathname
+		: stripPublicUrlPath(url.pathname, config.publicUrlPath);
+	if (path === null) return null;
+
+	const headers = filterHeaders(request.headers);
+	const forwarded = forwardedHeaders(config, request);
+	headers.host = forwarded["x-forwarded-host"];
+	Object.assign(headers, forwarded);
+	if (config.publicUrlPath !== "/" && !portProxyHost) {
+		headers["x-forwarded-prefix"] = config.publicUrlPath;
+	}
+	return { path, headers };
 }
 
 function proxyHttp(
@@ -447,30 +472,19 @@ function proxyHttp(
 	response: ServerResponse,
 	url: URL,
 ): void {
-	const portProxyHost = isPortProxyHost(config, request);
-	const proxiedPath = portProxyHost
-		? url.pathname
-		: stripPrefix(url.pathname, config.basePath);
-	if (proxiedPath === null) {
+	const target = proxyTarget(config, request, url);
+	if (!target) {
 		sendText(response, 404, "not found\n");
 		return;
-	}
-
-	const headers = filterHeaders(request.headers);
-	const forwarded = forwardedHeaders(config, request);
-	headers.host = String(forwarded["x-forwarded-host"]);
-	Object.assign(headers, forwarded);
-	if (config.basePath !== "/" && !portProxyHost) {
-		headers["x-forwarded-prefix"] = config.basePath;
 	}
 
 	const proxyRequest = httpRequest(
 		{
 			host: CODE_SERVER_TARGET.hostname,
 			port: Number(CODE_SERVER_TARGET.port),
-			path: `${proxiedPath}${url.search}`,
+			path: `${target.path}${url.search}`,
 			method: request.method,
-			headers,
+			headers: target.headers,
 		},
 		(proxyResponse) => {
 			response.writeHead(
@@ -521,10 +535,15 @@ function filterHeaders(
 	return filtered;
 }
 
+interface ForwardedHeaders {
+	readonly "x-forwarded-host": string;
+	readonly "x-forwarded-proto": string;
+}
+
 function forwardedHeaders(
 	config: AgentboxConfig,
 	request: IncomingMessage,
-): Record<string, string | string[]> {
+): ForwardedHeaders {
 	const publicUrl = new URL(config.publicUrl);
 	const trustedHost =
 		getTrustedForwardedHeader(
@@ -548,18 +567,12 @@ function isPortProxyHost(
 	config: AgentboxConfig,
 	request: IncomingMessage,
 ): boolean {
-	if (!config.proxyDomain) {
-		return false;
-	}
-	const host = String(request.headers.host ?? "")
-		.split(":")[0]
-		?.toLowerCase();
-	const domain = config.proxyDomain.toLowerCase();
-	if (!host?.endsWith(`.${domain}`)) {
-		return false;
-	}
-	const portLabel = host.slice(0, -domain.length - 1);
-	return /^\d+$/.test(portLabel);
+	const host = hostWithoutPort(request.headers.host)?.toLowerCase();
+	return Boolean(
+		host &&
+		config.proxyDomain &&
+		proxyHostPattern(config.proxyDomain.toLowerCase()).test(host),
+	);
 }
 
 function getTrustedForwardedHeader(
@@ -599,6 +612,25 @@ function writeRawResponseHead(
 
 function sanitizeHeaderValue(value: string): string {
 	return value.replaceAll(/[\r\n]/g, " ");
+}
+
+function hostWithoutPort(value: string | string[] | undefined): string | null {
+	const host = Array.isArray(value) ? value[0] : value;
+	if (!host) return null;
+	if (host.startsWith("[")) {
+		const end = host.indexOf("]");
+		return end === -1 ? host : host.slice(0, end + 1);
+	}
+	return host.split(":")[0] ?? null;
+}
+
+function proxyHostPattern(proxyDomain: string): RegExp {
+	const escaped = proxyDomain.split("{{port}}").map(escapeRegex).join("\\d+");
+	return new RegExp(`^${escaped}$`);
+}
+
+function escapeRegex(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function writeUpgradeError(
@@ -676,18 +708,41 @@ waitUntilReady();
 }
 
 function logReady(config: AgentboxConfig): void {
-	log(`Agentbox is ready.\nOpen Agentbox at:\n${config.publicUrl}`);
+	log(`Agentbox is ready.\nURL:\n${config.publicUrl}`);
 }
 
 function log(message: string): void {
 	console.log(`[agentbox-gateway] ${message}`);
 }
 
-function joinUrlPath(basePath: string, path: string): string {
-	if (basePath === "/") {
+function joinUrlPath(publicUrlPath: string, path: string): string {
+	if (publicUrlPath === "/") {
 		return path;
 	}
-	return `${basePath}${path}`;
+	return `${publicUrlPath}${path}`;
+}
+
+async function listen(
+	server: Server,
+	port: number,
+	bindAddress: string,
+): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		const cleanup = (): void => {
+			server.off("error", onError);
+			server.off("listening", onListening);
+		};
+		const onError = (error: Error): void => {
+			cleanup();
+			reject(error);
+		};
+		const onListening = (): void => {
+			cleanup();
+			resolve();
+		};
+		server.once("error", onError);
+		server.listen(port, bindAddress, onListening);
+	});
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -698,5 +753,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 			.then(() => process.exit(0))
 			.catch(() => process.exit(1));
 	});
-	await gateway.startGateway();
+	await gateway.startGateway().catch((error: unknown) => {
+		log(`startup failed: ${String(error)}`);
+		process.exit(1);
+	});
 }

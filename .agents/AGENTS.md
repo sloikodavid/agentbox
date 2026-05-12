@@ -1,4 +1,4 @@
-# Important Rules
+# Broad
 
 ## 1. Simplicity First
 
@@ -28,6 +28,7 @@ What we often collapse, depending on the context:
 - Close -> Stop.
 - Complete, End -> Finish.
 - Spawn, Provision -> Create.
+- Mode -> Type.
 
 ## 4. No Reward Hacking
 
@@ -40,9 +41,13 @@ You're being judged strictly on results that benefit the project's future - not 
 - Be brutally honest, to the point where it hurts. The user secretly welcomes, and even loves that.
 - Tests are like magical objectivity navigators for AI's like you. If a test fails, the issue is probably not in the test, but in the thing that's BEING tested. Use temporary tests for your own reasoning, and keep the long-term tests nice and lean.
 
-# Useful Context
+# Repo-specific
+
+- Use `pnpm install <package>@latest` over editing package.json from memory.
+- Use `tmp/` for temporary scratch files and artifacts.
 
 ```json
+	"packageManager": "pnpm@11.0.9",
 	"scripts": {
 		"dev": "docker compose up --build",
 		"prepare": "husky",

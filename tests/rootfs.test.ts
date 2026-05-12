@@ -18,6 +18,7 @@ import {
 	removeStoredPath,
 	restoreRootfs,
 	rootfsPaths,
+	storeAncestors,
 	storePath,
 	storedPathForLivePath,
 	unmarkRemoved,
@@ -38,16 +39,49 @@ describe("rootfs path mapping", () => {
 		expect(storedPathForLivePath("/etc/hosts", paths)).toBe(
 			join("/data/rootfs/files", "etc/hosts"),
 		);
+		expect(storedPathForLivePath("/..agentbox", paths)).toBe(
+			join("/data/rootfs/files", "..agentbox"),
+		);
 		expect(removalMarkerForLivePath("/etc/hosts", paths)).toBe(
 			join("/data/rootfs/removed-files", "etc/hosts.__removed__"),
 		);
 	});
 
-	test("excludes volatile paths and volume path", () => {
+	test("does not treat sibling paths as custom-root ancestors", async () => {
+		const root = await mkdtemp(join(tmpdir(), "agentbox-live-"));
+		const volume = await mkdtemp(join(tmpdir(), "agentbox-volume-"));
+		const sibling = `${root}-sibling`;
+		tempDirs.push(root, volume, sibling);
+		await mkdir(sibling, { recursive: true });
+		await expect(
+			storeAncestors(join(sibling, "file.txt"), {
+				rootPath: root,
+				volumePath: volume,
+			}),
+		).resolves.toBeUndefined();
+	});
+
+	test("excludes volatile paths, control-plane paths, and volume path", () => {
 		const paths = rootfsPaths({ volumePath: "/data", rootPath: "/" });
 		expect(isExcludedPath("/proc/cpuinfo", paths)).toBe(true);
+		expect(isExcludedPath("/etc/supervisor/supervisord.conf", paths)).toBe(
+			true,
+		);
+		expect(isExcludedPath("/etc/supervisor/conf.d/agentbox.conf", paths)).toBe(
+			true,
+		);
 		expect(isExcludedPath("/data/rootfs/files/etc/passwd", paths)).toBe(true);
 		expect(isExcludedPath("/custom-persist", paths)).toBe(false);
+	});
+
+	test("keeps selected image defaults user-persistable", () => {
+		const paths = rootfsPaths({ volumePath: "/data", rootPath: "/" });
+		expect(isExcludedPath("/etc/sudoers.d/user", paths)).toBe(false);
+		expect(isExcludedPath("/etc/mailcap", paths)).toBe(false);
+		expect(isExcludedPath("/etc/xdg/mimeapps.list", paths)).toBe(false);
+		expect(
+			isExcludedPath("/usr/share/applications/agentbox.desktop", paths),
+		).toBe(false);
 	});
 });
 

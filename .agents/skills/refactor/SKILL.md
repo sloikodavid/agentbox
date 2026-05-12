@@ -41,6 +41,7 @@ Use these words exactly when making architecture suggestions. Do not drift into 
 - **Mock at real seams only.** Prefer real code paths, local substitutes, fakes, or adapters over mocking your own modules.
 - **Do not introduce indirection without variation.** If nothing varies, do not add a port, adapter, strategy, factory, registry, provider, or abstraction.
 - **Prefer fewer, stronger modules over many tiny pass-through modules.** Small files are not the same thing as simple architecture.
+- **Do not hide real findings.** Rank them instead. The user should see the full material refactor landscape, not a teaser list.
 
 ## Explore
 
@@ -67,6 +68,8 @@ Look for friction:
 - Tests need huge setup because the interface is too wide or too low-level.
 - Tests use mocks because the real interface is hard to exercise.
 - A change that feels conceptually small requires edits across many files.
+- Compatibility code is mixed into the new design instead of isolated at the edge.
+- Old tests freeze shallow architecture instead of protecting behavior.
 
 Apply the deletion test to suspected shallow modules.
 
@@ -80,32 +83,55 @@ For each suspected module, ask:
 - Would a new contributor know when to use this module?
 - Would an AI agent know where to make a change without scanning half the repo?
 
-## Present candidates
+## Present findings
 
-Present a numbered list of deepening opportunities.
+Present the full architectural analysis from the inspected codebase.
 
-For each candidate, include:
+Do not artificially limit the number of findings. Include every material refactoring opportunity that has concrete evidence. Rank findings by importance so the user can tell what matters most.
+
+Use these priority groups:
+
+- **Must fix** - currently harming correctness, testability, locality, or change speed.
+- **Should fix** - clear architectural improvement with good evidence.
+- **Could fix later** - real issue, but not urgent.
+- **Do not fix** - tempting refactor that would likely add churn, abstraction, or indirection without enough payoff.
+
+For each material finding, include:
 
 - **Files** - the files/modules involved.
 - **Problem** - the architectural friction.
-- **Why now** - why this friction matters instead of being theoretical.
-- **Solution** - what should change in plain English.
-- **New module shape** - what the deepened module would own.
+- **Evidence** - concrete code patterns that prove it.
+- **Fix** - what should change in plain English.
+- **New module shape** - what the improved module would own.
 - **Caller impact** - what callers no longer need to know.
 - **Test impact** - what tests become simpler, stronger, or deletable.
+- **Compatibility impact** - whether compatibility matters and what type.
 - **Why it helps** - explain in terms of locality and leverage.
 - **Risk** - what could go wrong or what tradeoff the change introduces.
-- **Confidence** - high/medium/low, based on how much code was inspected.
+- **Priority** - must/should/could/do-not-fix.
+- **Confidence** - high/medium/low, based on inspected code.
 
-Do NOT propose detailed interfaces yet unless the user asked for implementation directly.
+Be complete enough that the user can understand the whole refactor landscape from one response.
 
-Do NOT list every possible refactor. Prefer a small number of high-signal candidates.
+Do not stop after a small candidate list unless the user explicitly asked for a quick scan.
 
-End by asking which candidate the user wants to explore.
+Do not hide findings merely because there are many. Collapse duplicates, group related issues, and rank them. Suppression is worse than structured abundance.
 
-## Candidate quality bar
+Do not ask the user which candidate to explore unless implementation requires a product decision, compatibility decision, public API decision, or migration-risk decision that the code cannot answer.
 
-A good candidate usually has at least two of these:
+When useful, include lightweight interface sketches immediately. Do not withhold better shapes just because the user did not explicitly ask for implementation. Keep sketches short during analysis, but include enough shape that the user can judge whether the refactor is real or vague.
+
+End with a recommended execution order:
+
+1. First change to make.
+2. Second change to make.
+3. Changes to avoid for now.
+4. Tests to add before or during the refactor.
+5. Compatibility decisions that must be made before implementation.
+
+## Finding quality bar
+
+A good finding usually has at least two of these:
 
 - Multiple callers repeat the same knowledge.
 - Tests are awkward because behavior crosses too many small modules.
@@ -119,8 +145,10 @@ A good candidate usually has at least two of these:
 - The interface forces callers to perform setup in the right order.
 - Error handling is duplicated or inconsistent.
 - The public name describes how the code works instead of what it means.
+- Compatibility logic is deforming the clean design.
+- Tests protect old structure instead of current behavior.
 
-A bad candidate is usually one of these:
+A bad finding is usually one of these:
 
 - Aesthetic rearrangement.
 - Abstraction for a single use with no variation.
@@ -130,12 +158,18 @@ A bad candidate is usually one of these:
 - Renaming without improving ownership, interface, or tests.
 - Moving code without reducing caller knowledge.
 - Adding a seam where tests could have used the real implementation.
+- Preserving compatibility without naming who benefits from it.
+- Deleting compatibility without checking persisted data, public APIs, CLIs, schemas, package exports, or user-authored config.
 
-## Grill the chosen candidate
+## Grill the highest-priority design
 
-Once the user picks a candidate, grill the design before changing code.
+After presenting findings, grill the highest-priority design before changing code.
 
-Walk the design tree one decision at a time:
+If the user selected a finding, grill that one. If the user did not select one, grill the highest-priority finding yourself.
+
+Do not ask one question at a time by default. Answer design questions from the codebase where possible. Only ask the user when the answer depends on product intent, compatibility promises, public API stability, user-facing behavior, or acceptable migration risk.
+
+Walk the design tree:
 
 - What concept should own this behavior?
 - What should the module hide?
@@ -153,15 +187,21 @@ Walk the design tree one decision at a time:
 - What would make this design overbuilt?
 - What would make this design too shallow?
 
+For each load-bearing question:
+
+- State the question.
+- Give the recommended answer.
+- Explain the evidence.
+- Mark whether it is resolved or unresolved.
+
 Rules:
 
 - Surface hidden assumptions, missing constraints, fuzzy language, overloaded terms, and skipped decisions.
-- Challenge the candidate against the existing code, naming, tests, and project constraints.
+- Challenge the design against the existing code, naming, tests, and project constraints.
 - Stress-test with concrete scenarios, edge cases, and counterexamples.
-- For each question, provide your recommended answer.
-- Ask one question at a time, waiting for feedback before continuing.
-- If the answer can be found by exploring the codebase, explore the codebase instead.
-- Keep an explicit unresolved list, and do not proceed to interface design while a load-bearing decision is still fuzzy.
+- Prefer answering from inspected code over asking the user.
+- Keep an explicit unresolved list.
+- Do not proceed to implementation while a load-bearing decision is still fuzzy.
 
 ## Backwards compatibility questioning
 
@@ -220,7 +260,9 @@ Default stance:
 
 - For private internal code, prefer clean breaks and direct caller updates.
 - For persisted data, user-authored config, public APIs, CLIs, schemas, and package exports, assume compatibility matters until proven otherwise.
-- Never let compatibility silently deform the new interface. If compatibility is needed, isolate it in a wrapper, adapter, migration, or versioned path.
+- Never let compatibility silently deform the new interface.
+- If compatibility is needed, isolate it in a wrapper, adapter, migration, or versioned path.
+- Compatibility belongs at the edge. The deep module should represent the better shape.
 
 ## Concrete scenarios
 
@@ -248,6 +290,8 @@ For each scenario, ask:
 - What should be hidden?
 - What should the test assert?
 
+Use scenario answers to validate or reject the proposed interface.
+
 ## Design the interface
 
 When the shape is clear, propose 2-3 alternative interfaces for the deepened module.
@@ -260,7 +304,8 @@ Each design should include:
 - **Dependency strategy** - which dependencies are internal, which are ports, and which adapters exist.
 - **Testing strategy** - how tests cross the interface.
 - **Migration path** - how to move from current code to new shape safely.
-- **Tradeoffs** - locality, leverage, seam placement, flexibility, and risk.
+- **Compatibility stance** - no compatibility, temporary wrapper, soft compatibility, hard compatibility, data migration, dual-read/single-write, or versioned interface.
+- **Tradeoffs** - locality, leverage, seam placement, flexibility, compatibility cost, and risk.
 
 Make the designs meaningfully different. Do not present tiny variations.
 
@@ -271,7 +316,7 @@ Useful design constraints:
 - **Explicit lifecycle** - setup/start/stop/cleanup are impossible to misuse.
 - **Dependency isolation** - external systems sit behind clear ports.
 - **Functional core** - pure decision logic separated from effectful shell where useful.
-- **Compatibility wrapper** - old callers can migrate gradually.
+- **Compatibility wrapper** - old callers can migrate gradually when compatibility is deliberately needed.
 - **Strict domain interface** - caller talks in domain concepts, not infrastructure concepts.
 
 Then recommend the strongest design. Be opinionated. Do not dump a menu and refuse to choose.
@@ -291,6 +336,7 @@ A good interface usually:
 - Has fewer methods than the implementation has concepts.
 - Keeps extension points internal until variation is real.
 - Lets new callers use the module without reading the implementation.
+- Keeps compatibility code outside the clean interface when possible.
 
 A bad interface usually:
 
@@ -302,6 +348,7 @@ A bad interface usually:
 - Requires mocks for code the project owns.
 - Leaks HTTP, database, filesystem, process, or SDK details into feature callers.
 - Has names like `Manager`, `Service`, `Helper`, `Utils`, `Handler`, or `Processor` without a precise meaning.
+- Preserves old behavior by making the new interface worse.
 
 ## Handle dependencies
 
@@ -375,7 +422,8 @@ Before adding a seam, ask:
 
 - What varies across this seam?
 - Do we have at least two real adapters?
-- Is one adapter production and one adapter test? Is the test adapter actually valuable?
+- Is one adapter production and one adapter test?
+- Is the test adapter actually valuable?
 - Is the seam protecting callers from change?
 - Is the seam just hiding a single function call?
 - Would the code be simpler if this stayed internal?
@@ -399,6 +447,7 @@ Good tests:
 - Use real collaborators when they are cheap and deterministic.
 - Use fakes/adapters at real seams.
 - Assert outcomes, not implementation steps.
+- Prove compatibility only for promises deliberately kept.
 
 Bad tests:
 
@@ -410,6 +459,7 @@ Bad tests:
 - Duplicate the implementation logic in the assertion.
 - Require huge setup because the interface is too low-level.
 - Pass even when the user-facing behavior is broken.
+- Freeze old shallow seams after the deeper interface exists.
 
 Prefer tests named after behavior:
 
@@ -550,6 +600,8 @@ After behavior is green, look for refactor moves:
 - Replace flag-heavy interfaces with clearer operations or types.
 - Replace primitive obsession with precise values only when it reduces caller knowledge.
 - Keep private helpers private; do not test them directly.
+- Move compatibility handling to wrappers, adapters, migrations, or versioned paths.
+- Delete compatibility code once the migration window is over.
 
 Run tests after each meaningful refactor step.
 
@@ -587,12 +639,8 @@ When unsure, say what evidence is missing and how to find it.
 
 Prefer concrete file/module references over generic advice.
 
-Prefer fewer, sharper candidates over long lists.
+Prefer complete ranked analysis over artificially small candidate lists.
 
-Every recommendation should explain:
+Prefer interface sketches over vague design advice when the shape is clear.
 
-- what changes.
-- why it improves locality.
-- why it improves leverage.
-- how tests get better.
-- what risk it introduces.
+Do not ask the user to pick from a menu unless a real product, compatibility,

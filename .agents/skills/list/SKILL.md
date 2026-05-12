@@ -33,6 +33,8 @@ description: Use when you're not sure where to look, need to find the right file
   pre-commit
 .vscode/
   extensions.json
+docs/
+  architecture.md
 rootfs/
   etc/
     sudoers.d/
@@ -72,10 +74,9 @@ rootfs/
       .bashrc
   opt/
     agentbox/
-      services/
-        code-server.sh
-        entrypoint.sh
+      code-server.ts
       config.ts
+      entrypoint.sh
       gateway.ts
       rootfs.ts
   usr/
@@ -88,9 +89,20 @@ tests/
   fixtures/
     cert.pem
     key.pem
+  code-server.test.ts
   config.test.ts
   gateway.test.ts
   rootfs.test.ts
+vendor/
+  code-server/
+    overlay/
+      src/
+        browser/
+          pages/
+            login.html
+    patches/
+      .gitkeep
+    README.md
 .dockerignore
 .editorconfig
 .gitattributes

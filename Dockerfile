@@ -46,6 +46,8 @@ RUN case "${TARGETARCH}" in \
     > /opt/code-server/current/.agentbox-upstream \
   && rm -rf /tmp/code-server.tar.gz /tmp/code-server.version.json /tmp/code-server-config
 
+COPY vendor/code-server/overlay/ /opt/code-server/current/
+
 FROM node:26.1.0-trixie-slim@sha256:424cafd2a035ed2b2d74acc3142b68b426fb62a47742c80a75e7117db02d6b30 AS runtime
 
 ARG AGENTBOX_BUILD_VERSION=unknown
@@ -172,11 +174,11 @@ RUN find / -xdev -name .gitkeep -type f -delete \
   && mkdir -p /data \
   && chown -R user:user /home/user \
   && chmod 0440 /etc/sudoers.d/user \
-  && chmod +x /opt/agentbox/services/entrypoint.sh /opt/agentbox/services/code-server.sh \
+  && chmod +x /opt/agentbox/entrypoint.sh \
   && ln -sf /opt/code-server/current/lib/vscode/bin/remote-cli/code-server /usr/local/bin/code \
   && ln -sf /opt/code-server/current/bin/code-server /usr/local/bin/code-server \
   && update-desktop-database /usr/share/applications \
   && update-mime-database /usr/share/mime
 
 EXPOSE 8080
-ENTRYPOINT ["/opt/agentbox/services/entrypoint.sh"]
+ENTRYPOINT ["/opt/agentbox/entrypoint.sh"]

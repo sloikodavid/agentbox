@@ -52,7 +52,13 @@ describe("createGateway", () => {
 		expect(gateway.server.listening).toBe(false);
 	});
 
-	test("serves fixed health endpoint under the base path", async () => {
+	test("can stop before it starts", async () => {
+		const gateway = createGateway(config({ port: 0 }));
+		await gateway.stopGateway();
+		expect(gateway.server.listening).toBe(false);
+	});
+
+	test("serves fixed health endpoint under the public URL path", async () => {
 		await listenCodeServer(
 			createServer((request, response) => {
 				if (sendCodeServerHealth(request, response)) {
@@ -62,7 +68,9 @@ describe("createGateway", () => {
 			}),
 		);
 		await writeRootfsHeartbeat();
-		const gateway = createGateway(config({ port: 0, basePath: "/agentbox" }));
+		const gateway = createGateway(
+			config({ port: 0, publicUrlPath: "/agentbox" }),
+		);
 		await gateway.startGateway();
 		const address = gateway.server.address();
 		if (!address || typeof address === "string") {
@@ -101,7 +109,9 @@ describe("createGateway", () => {
 		tempDirs.push(dir);
 		await writeRootfsHeartbeat();
 
-		const gateway = createGateway(config({ port: 0, basePath: "/agentbox" }));
+		const gateway = createGateway(
+			config({ port: 0, publicUrlPath: "/agentbox" }),
+		);
 		await gateway.startGateway();
 		const address = gateway.server.address();
 		if (!address || typeof address === "string") {
@@ -111,11 +121,17 @@ describe("createGateway", () => {
 			`http://127.0.0.1:${address.port}/agentbox/path?q=1`,
 		);
 		expect(await response.text()).toContain("proxied:/path?q=1:/agentbox");
+		const wrongPrefix = await fetch(
+			`http://127.0.0.1:${address.port}/agentbox2/path`,
+		);
+		expect(wrongPrefix.status).toBe(404);
 		await gateway.stopGateway();
 	});
 
 	test("serves an auto-continuing starting page for browsers", async () => {
-		const gateway = createGateway(config({ port: 0, basePath: "/agentbox" }));
+		const gateway = createGateway(
+			config({ port: 0, publicUrlPath: "/agentbox" }),
+		);
 		await gateway.startGateway();
 		const address = gateway.server.address();
 		if (!address || typeof address === "string") {
@@ -149,7 +165,7 @@ describe("createGateway", () => {
 		await gateway.stopGateway();
 	});
 
-	test("serves metrics under the base path when enabled", async () => {
+	test("serves metrics under the public URL path when enabled", async () => {
 		await listenCodeServer(
 			createServer((request, response) => {
 				if (sendCodeServerHealth(request, response)) {
@@ -161,7 +177,7 @@ describe("createGateway", () => {
 		await writeRootfsHeartbeat();
 
 		const gateway = createGateway(
-			config({ port: 0, basePath: "/agentbox", enableMetrics: true }),
+			config({ port: 0, publicUrlPath: "/agentbox", enableMetrics: true }),
 		);
 		await gateway.startGateway();
 		const address = gateway.server.address();
@@ -209,7 +225,9 @@ describe("createGateway", () => {
 		await listenCodeServer(codeServer);
 		await writeRootfsHeartbeat();
 
-		const gateway = createGateway(config({ port: 0, basePath: "/agentbox" }));
+		const gateway = createGateway(
+			config({ port: 0, publicUrlPath: "/agentbox" }),
+		);
 		await gateway.startGateway();
 		const address = gateway.server.address();
 		if (!address || typeof address === "string") {
@@ -295,8 +313,8 @@ describe("createGateway", () => {
 		const gateway = createGateway(
 			config({
 				port: 0,
-				basePath: "/agentbox",
-				proxyDomain: "box.example.com",
+				publicUrlPath: "/agentbox",
+				proxyDomain: "{{port}}.box.example.com",
 			}),
 		);
 		await gateway.startGateway();
@@ -307,6 +325,40 @@ describe("createGateway", () => {
 		expect(
 			await requestText(address.port, "/hook", "8787.box.example.com"),
 		).toBe("/hook:");
+		await gateway.stopGateway();
+	});
+
+	test("matches patterned port-template hosts", async () => {
+		await listenCodeServer(
+			createServer((request, response) => {
+				if (sendCodeServerHealth(request, response)) {
+					return;
+				}
+				response.end(
+					`${request.url}:${headerValue(request.headers["x-forwarded-prefix"])}`,
+				);
+			}),
+		);
+		await writeRootfsHeartbeat();
+
+		const gateway = createGateway(
+			config({
+				port: 0,
+				publicUrlPath: "/agentbox",
+				proxyDomain: "code-{{port}}.box.example.com",
+			}),
+		);
+		await gateway.startGateway();
+		const address = gateway.server.address();
+		if (!address || typeof address === "string") {
+			throw new Error("expected TCP address");
+		}
+		expect(
+			await requestText(address.port, "/hook", "code-8787.box.example.com"),
+		).toBe("/hook:");
+		expect(
+			await requestText(address.port, "/agentbox/hook", "box.example.com"),
+		).toBe("/hook:/agentbox");
 		await gateway.stopGateway();
 	});
 
@@ -443,6 +495,30 @@ describe("createGateway", () => {
 		});
 		await gateway.stopGateway();
 	});
+
+	test("fails readiness when a rootfs watcher failed", async () => {
+		await listenCodeServer(
+			createServer((request, response) => {
+				if (sendCodeServerHealth(request, response)) {
+					return;
+				}
+				response.end("ok");
+			}),
+		);
+		await writeRootfsHeartbeat({
+			failedWatchers: [{ path: "/home", message: "watch failed" }],
+		});
+
+		const gateway = createGateway(config({ port: 0 }));
+		await gateway.startGateway();
+		expect(gateway.health().ready).toBe(false);
+		expect(gateway.health().checks).toContainEqual({
+			name: "rootfs",
+			status: "fail",
+			message: "rootfs store watcher failed for /home",
+		});
+		await gateway.stopGateway();
+	});
 });
 
 async function listenCodeServer(server: Server): Promise<void> {
@@ -453,7 +529,13 @@ async function listenCodeServer(server: Server): Promise<void> {
 }
 
 async function writeRootfsHeartbeat(
-	overrides: { readonly watcherCount?: number } = {},
+	overrides: {
+		readonly watcherCount?: number;
+		readonly failedWatchers?: readonly {
+			readonly path: string;
+			readonly message: string;
+		}[];
+	} = {},
 ): Promise<void> {
 	await mkdir(dirname(ROOTFS_HEARTBEAT_PATH), { recursive: true });
 	await writeFile(
@@ -461,7 +543,7 @@ async function writeRootfsHeartbeat(
 		`${JSON.stringify({
 			updatedAt: new Date().toISOString(),
 			watcherCount: overrides.watcherCount ?? 1,
-			failedWatchers: [],
+			failedWatchers: overrides.failedWatchers ?? [],
 		})}\n`,
 	);
 }
@@ -554,11 +636,13 @@ function config(overrides: Partial<AgentboxConfig> = {}): AgentboxConfig {
 		port: 8080,
 		bindAddress: "127.0.0.1",
 		volumePath: "/data",
-		basePath: "/",
+		publicUrlPath: "/",
 		publicUrl: "http://localhost:8080",
 		publicProxyUrlTemplate: "./proxy/{{port}}",
 		trustedProxyHops: 0,
 		enableMetrics: false,
+		authType: "password",
+		password: "test",
 		buildVersion: "test",
 		buildRevision: "test",
 		buildSource: "test",
