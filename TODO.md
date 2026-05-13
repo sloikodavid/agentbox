@@ -6,6 +6,8 @@
 - Add CI automation to mirror new code-server assets after Renovate opens or merges a code-server update?
 - Revisit patch stack vs dedicated code-server fork once shortcuts/branding patches become broad or the gateway shape changes.
 
+- Husky properly working under dev edge cases i.e. keeping check passing parts unstaged.
+
 - The OSS image can be safe and simple, but cloud can do more:
   - run the same Agentbox image with managed infrastructure around it.
   - easy domains and TLS.

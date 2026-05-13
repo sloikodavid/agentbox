@@ -6,13 +6,13 @@ Local source and current diff only. No source edits were made.
 
 Relevant current files:
 
-- `rootfs/opt/agentbox/persistence/watch.ts`
-- `rootfs/opt/agentbox/persistence/reconcile.ts`
-- `rootfs/opt/agentbox/persistence/index.ts`
-- `rootfs/opt/agentbox/persistence/rootfs.ts`
-- `rootfs/opt/agentbox/persistence/copy.ts`
-- `rootfs/opt/agentbox/defaults.ts`
-- `tests/persistence.test.ts`
+- `rootfs/opt/agentbox/persistence/watch.ts`.
+- `rootfs/opt/agentbox/persistence/reconcile.ts`.
+- `rootfs/opt/agentbox/persistence/index.ts`.
+- `rootfs/opt/agentbox/persistence/rootfs.ts`.
+- `rootfs/opt/agentbox/persistence/copy.ts`.
+- `rootfs/opt/agentbox/defaults.ts`.
+- `tests/persistence.test.ts`.
 
 The diff currently introduces reconciliation/repair around persistence. Staged work added scoped/root reconciliation and periodic full reconciliation; unstaged work switches startup/periodic full reconciliation to `repairPersistedRootfs()` and extends the interval from `60_000` to `600_000` ms.
 

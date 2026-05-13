@@ -8,6 +8,8 @@ description: Use when you're not sure where to look, need to find the right file
 ```text
 .agents/
   skills/
+    break/
+      SKILL.md
     grill/
       SKILL.md
     list/
@@ -35,6 +37,10 @@ description: Use when you're not sure where to look, need to find the right file
   extensions.json
 docs/
   architecture.md
+research/
+  inotify-node.md
+  local-persistence-performance.md
+  watcher-architectures.md
 rootfs/
   etc/
     sudoers.d/
@@ -84,6 +90,7 @@ rootfs/
         constants.ts
         copy.ts
         index.ts
+        reconcile.ts
         rootfs.ts
         types.ts
         watch.ts
@@ -127,6 +134,7 @@ eslint.config.mjs
 LICENSE
 package.json
 pnpm-lock.yaml
+progress.md
 renovate.json
 SECURITY.md
 TODO.md

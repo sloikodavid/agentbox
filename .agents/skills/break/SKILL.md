@@ -70,9 +70,9 @@ Create a temporary test file when the probe count would bloat the real suite.
 
 Good temporary names:
 
-- `tests/<thing>.break.test.ts`
-- `tests/<thing>.adversarial.test.ts`
-- `tests/<thing>.fuzz.test.ts`
+- `tests/<thing>.break.test.ts`.
+- `tests/<thing>.adversarial.test.ts`.
+- `tests/<thing>.fuzz.test.ts`.
 
 Rules:
 
