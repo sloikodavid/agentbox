@@ -13,7 +13,9 @@ export interface AgentboxConfig {
 	readonly publicUrl: string;
 	readonly publicProxyUrlTemplate: string;
 	readonly trustedProxyHops: number;
-	readonly enableMetrics: boolean;
+	readonly disableMetrics: boolean;
+	readonly disableFileDownloads: boolean;
+	readonly disableFileUploads: boolean;
 	readonly authType: AgentboxAuthType;
 	readonly password?: string;
 	readonly hashedPassword?: string;
@@ -94,10 +96,20 @@ export function parseConfig(
 			"AGENTBOX_TRUSTED_PROXY_HOPS",
 			DEFAULTS.trustedProxyHops,
 		),
-		enableMetrics: parseBoolean(
-			env.AGENTBOX_ENABLE_METRICS,
-			"AGENTBOX_ENABLE_METRICS",
-			DEFAULTS.enableMetrics,
+		disableMetrics: parseBoolean(
+			env.AGENTBOX_DISABLE_METRICS,
+			"AGENTBOX_DISABLE_METRICS",
+			DEFAULTS.disableMetrics,
+		),
+		disableFileDownloads: parseBoolean(
+			env.AGENTBOX_DISABLE_FILE_DOWNLOADS,
+			"AGENTBOX_DISABLE_FILE_DOWNLOADS",
+			DEFAULTS.disableFileDownloads,
+		),
+		disableFileUploads: parseBoolean(
+			env.AGENTBOX_DISABLE_FILE_UPLOADS,
+			"AGENTBOX_DISABLE_FILE_UPLOADS",
+			DEFAULTS.disableFileUploads,
 		),
 		...auth,
 		...(tlsKeyPath && tlsCertPath

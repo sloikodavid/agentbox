@@ -27,11 +27,7 @@ export interface PersistenceWatcher {
 export interface Persistence {
 	readonly restore: () => Promise<void>;
 	readonly record: (change: PersistenceChange) => Promise<void>;
+	readonly reconcile: (livePath?: string) => Promise<void>;
 	readonly watch: () => Promise<PersistenceWatcher>;
 	readonly shouldPersist: (livePath: string) => boolean;
-}
-
-export interface QueuedPersistenceEvent {
-	readonly livePath: string;
-	readonly type: PersistenceChange["type"];
 }

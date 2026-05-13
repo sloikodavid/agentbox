@@ -6,19 +6,16 @@ import {
 	writeFile,
 	watch,
 } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type {
-	QueuedPersistenceEvent,
-	PersistenceChange,
 	PersistenceHeartbeat,
 	PersistenceWatcher,
 	PersistenceWatcherFailure,
 } from "./types.ts";
 import type { RootfsPaths } from "./rootfs.ts";
-import { isTopLevelEntry } from "./rootfs.ts";
-import { walk } from "./copy.ts";
 import {
 	PERSISTENCE_EVENT_BATCH_WINDOW_MS,
+	PERSISTENCE_FULL_RECONCILE_INTERVAL_MS,
 	PERSISTENCE_HEARTBEAT_INTERVAL_MS,
 	PERSISTENCE_RECONCILE_INTERVAL_MS,
 } from "./constants.ts";
@@ -31,19 +28,22 @@ interface ActiveWatcher {
 export async function runPersistenceWatch(options: {
 	readonly paths: RootfsPaths;
 	readonly heartbeatPath: string;
-	readonly record: (change: PersistenceChange) => Promise<void>;
+	readonly reconcile: (livePath?: string) => Promise<void>;
+	readonly repair: () => Promise<void>;
 	readonly shouldPersist: (livePath: string) => boolean;
 	readonly log: (message: string) => void;
 }): Promise<PersistenceWatcher> {
 	const paths = options.paths;
-	const queue = new Map<string, QueuedPersistenceEvent>();
-	const topLevelWatchers = new Map<string, ActiveWatcher>();
+	const dirtyScopes = new Set<string>();
+	const directoryWatchers = new Map<string, ActiveWatcher>();
 	const watcherFailures: PersistenceWatcherFailure[] = [];
 	let rootWatcher: ActiveWatcher | undefined;
 	let timer: NodeJS.Timeout | undefined;
 	let heartbeatTimer: NodeJS.Timeout | undefined;
 	let rootReconcileTimer: NodeJS.Timeout | undefined;
+	let fullReconcileTimer: NodeJS.Timeout | undefined;
 	let flushing: Promise<void> = Promise.resolve();
+	let reconciling: Promise<void> = Promise.resolve();
 	let rootEntrySnapshot = new Set<string>();
 	let stopping = false;
 	let heartbeatWriteId = 0;
@@ -60,7 +60,7 @@ export async function runPersistenceWatch(options: {
 	const beat = async (): Promise<void> => {
 		lastHeartbeat = {
 			updatedAt: new Date().toISOString(),
-			watcherCount: (rootWatcher ? 1 : 0) + topLevelWatchers.size,
+			watcherCount: (rootWatcher ? 1 : 0) + directoryWatchers.size,
 			failedWatchers: [...watcherFailures],
 		};
 		const tempPath = `${options.heartbeatPath}.${process.pid}.${heartbeatWriteId++}.tmp`;
@@ -80,24 +80,36 @@ export async function runPersistenceWatch(options: {
 		options.log(`watch failed for ${livePath}: ${message}`);
 	};
 
-	const recordSafely = async (event: QueuedPersistenceEvent): Promise<void> => {
+	const reconcileSafely = async (livePath: string): Promise<void> => {
+		const run = reconciling.then(
+			() => reconcileOneSafely(livePath),
+			() => reconcileOneSafely(livePath),
+		);
+		reconciling = run.catch(() => {});
+		await run;
+	};
+
+	const reconcileOneSafely = async (livePath: string): Promise<void> => {
 		try {
-			await options.record(event);
+			await options.reconcile(livePath);
 		} catch (error) {
-			recordWatchFailure(event.livePath, error);
+			options.log(`reconcile failed for ${livePath}: ${String(error)}`);
+		}
+	};
+
+	const repairSafely = async (): Promise<void> => {
+		try {
+			await options.repair();
+		} catch (error) {
+			options.log(`repair failed: ${String(error)}`);
 		}
 	};
 
 	const flushQueuedEvents = async (): Promise<void> => {
-		const events = [...queue.values()];
-		queue.clear();
-		const removals = events.filter((event) => event.type === "removed");
-		const stores = events.filter((event) => event.type === "present");
-		for (const event of removals) {
-			await recordSafely(event);
-		}
-		for (const event of stores) {
-			await recordSafely(event);
+		const scopes = collapseDirtyScopes([...dirtyScopes]);
+		dirtyScopes.clear();
+		for (const livePath of scopes) {
+			await reconcileSafely(livePath);
 		}
 		await beat();
 	};
@@ -112,11 +124,15 @@ export async function runPersistenceWatch(options: {
 		await run;
 	};
 
-	const schedule = (event: QueuedPersistenceEvent): void => {
-		if (stopping || !options.shouldPersist(event.livePath)) {
+	const scheduleReconcile = (livePath: string): void => {
+		if (stopping) {
 			return;
 		}
-		queue.set(event.livePath, event);
+		const path = resolve(livePath);
+		if (path !== resolve(paths.rootPath) && !options.shouldPersist(path)) {
+			return;
+		}
+		dirtyScopes.add(path);
 		timer ??= setTimeout(() => {
 			flush().catch((error: unknown) =>
 				options.log(`flush failed: ${String(error)}`),
@@ -124,20 +140,21 @@ export async function runPersistenceWatch(options: {
 		}, PERSISTENCE_EVENT_BATCH_WINDOW_MS);
 	};
 
-	const queueRecursiveContentsSafely = async (
+	const watchRecursiveContentsSafely = async (
 		livePath: string,
 	): Promise<void> => {
 		try {
-			await queueRecursiveContents(livePath, schedule);
+			await watchRecursiveContents(
+				livePath,
+				options.shouldPersist,
+				watchPersistedDirectory,
+			);
 		} catch (error) {
 			recordWatchFailure(livePath, error);
 		}
 	};
 
-	const watchDirectory = (
-		livePath: string,
-		recursive: boolean,
-	): ActiveWatcher | undefined => {
+	const watchDirectory = (livePath: string): ActiveWatcher | undefined => {
 		if (
 			resolve(livePath) !== resolve(paths.rootPath) &&
 			!options.shouldPersist(livePath)
@@ -148,7 +165,7 @@ export async function runPersistenceWatch(options: {
 			const controller = new AbortController();
 			const activeWatcher: ActiveWatcher = { controller, closing: false };
 			const watcher = watch(livePath, {
-				recursive,
+				recursive: false,
 				signal: controller.signal,
 			});
 			void (async () => {
@@ -159,18 +176,13 @@ export async function runPersistenceWatch(options: {
 					const changedPath = resolve(livePath, event.filename.toString());
 					try {
 						const stats = await lstat(changedPath);
-						schedule({ livePath: changedPath, type: "present" });
 						if (stats.isDirectory()) {
-							if (isTopLevelEntry(changedPath, paths)) {
-								watchTopLevelDirectory(changedPath);
-							}
-							await queueRecursiveContentsSafely(changedPath);
+							await watchRecursiveContentsSafely(changedPath);
 						}
+						scheduleReconcile(changedPath);
 					} catch {
-						schedule({ livePath: changedPath, type: "removed" });
-						if (isTopLevelEntry(changedPath, paths)) {
-							disposeTopLevelWatcher(changedPath);
-						}
+						scheduleReconcile(changedPath);
+						disposeDirectoryWatchersWithin(changedPath);
 					}
 				}
 			})().catch((error: unknown) => {
@@ -185,26 +197,27 @@ export async function runPersistenceWatch(options: {
 		}
 	};
 
-	const watchTopLevelDirectory = (livePath: string): void => {
+	const watchPersistedDirectory = (livePath: string): void => {
 		const path = resolve(livePath);
-		if (topLevelWatchers.has(path) || !options.shouldPersist(path)) {
+		if (directoryWatchers.has(path) || !options.shouldPersist(path)) {
 			return;
 		}
-		const watcher = watchDirectory(path, true);
+		const watcher = watchDirectory(path);
 		if (watcher) {
-			topLevelWatchers.set(path, watcher);
+			directoryWatchers.set(path, watcher);
 		}
 	};
 
-	const disposeTopLevelWatcher = (livePath: string): void => {
+	const disposeDirectoryWatchersWithin = (livePath: string): void => {
 		const path = resolve(livePath);
-		const watcher = topLevelWatchers.get(path);
-		if (!watcher) {
-			return;
+		for (const [watchPath, watcher] of directoryWatchers) {
+			if (!isSameOrDescendantPath(watchPath, path)) {
+				continue;
+			}
+			directoryWatchers.delete(watchPath);
+			watcher.closing = true;
+			watcher.controller.abort();
 		}
-		topLevelWatchers.delete(path);
-		watcher.closing = true;
-		watcher.controller.abort();
 	};
 
 	const reconcileRootEntries = async (
@@ -222,20 +235,25 @@ export async function runPersistenceWatch(options: {
 			}
 			try {
 				const stats = await lstat(livePath);
-				schedule({ livePath, type: "present" });
 				if (stats.isDirectory()) {
-					watchTopLevelDirectory(livePath);
-					await queueRecursiveContentsSafely(livePath);
+					await watchRecursiveContentsSafely(livePath);
+					if (mode === "changes") {
+						scheduleReconcile(livePath);
+					}
+				} else if (mode === "changes") {
+					scheduleReconcile(paths.rootPath);
 				}
 			} catch {
-				schedule({ livePath, type: "removed" });
-				disposeTopLevelWatcher(livePath);
+				if (mode === "changes") {
+					scheduleReconcile(paths.rootPath);
+				}
+				disposeDirectoryWatchersWithin(livePath);
 			}
 		}
 		for (const livePath of rootEntrySnapshot) {
 			if (!currentEntries.has(livePath)) {
-				schedule({ livePath, type: "removed" });
-				disposeTopLevelWatcher(livePath);
+				scheduleReconcile(livePath);
+				disposeDirectoryWatchersWithin(livePath);
 			}
 		}
 		rootEntrySnapshot = currentEntries;
@@ -252,17 +270,22 @@ export async function runPersistenceWatch(options: {
 			clearInterval(rootReconcileTimer);
 			rootReconcileTimer = undefined;
 		}
+		if (fullReconcileTimer) {
+			clearInterval(fullReconcileTimer);
+			fullReconcileTimer = undefined;
+		}
 		const watchers = [
 			...(rootWatcher ? [rootWatcher] : []),
-			...topLevelWatchers.values(),
+			...directoryWatchers.values(),
 		];
 		rootWatcher = undefined;
-		topLevelWatchers.clear();
+		directoryWatchers.clear();
 		for (const watcher of watchers) {
 			watcher.closing = true;
 			watcher.controller.abort();
 		}
 		await flush();
+		await reconciling;
 	};
 
 	const handleSigterm = (): void => {
@@ -271,14 +294,26 @@ export async function runPersistenceWatch(options: {
 			.catch(() => process.exit(1));
 	};
 
-	rootWatcher = watchDirectory(paths.rootPath, false);
+	rootWatcher = watchDirectory(paths.rootPath);
 	await reconcileRootEntries("initial");
+	await options.repair();
+	dirtyScopes.clear();
+	if (timer) {
+		clearTimeout(timer);
+		timer = undefined;
+	}
 	rootReconcileTimer = setInterval(() => {
 		reconcileRootEntries("changes").catch((error: unknown) =>
 			options.log(`root reconcile failed: ${String(error)}`),
 		);
 	}, PERSISTENCE_RECONCILE_INTERVAL_MS);
 	rootReconcileTimer.unref();
+	fullReconcileTimer = setInterval(() => {
+		repairSafely().catch((error: unknown) =>
+			options.log(`repair failed: ${String(error)}`),
+		);
+	}, PERSISTENCE_FULL_RECONCILE_INTERVAL_MS);
+	fullReconcileTimer.unref();
 
 	await beat();
 	heartbeatTimer = setInterval(() => {
@@ -296,9 +331,58 @@ export async function runPersistenceWatch(options: {
 	};
 }
 
-async function queueRecursiveContents(
+function collapseDirtyScopes(scopes: string[]): string[] {
+	const collapsed: string[] = [];
+	for (const scope of scopes.sort(
+		(left, right) => left.length - right.length,
+	)) {
+		if (collapsed.some((existing) => isSameOrDescendantPath(scope, existing))) {
+			continue;
+		}
+		collapsed.push(scope);
+	}
+	return collapsed;
+}
+
+function isSameOrDescendantPath(path: string, ancestor: string): boolean {
+	return (
+		path === ancestor ||
+		path.startsWith(ancestor.endsWith(sep) ? ancestor : `${ancestor}${sep}`)
+	);
+}
+
+async function watchRecursiveContents(
 	livePath: string,
-	schedule: (event: QueuedPersistenceEvent) => void,
+	shouldPersist: (livePath: string) => boolean,
+	watchDirectory: (livePath: string) => void,
 ): Promise<void> {
-	await walk(livePath, (path) => schedule({ livePath: path, type: "present" }));
+	if (!shouldPersist(livePath)) {
+		return;
+	}
+	let stats;
+	try {
+		stats = await lstat(livePath);
+	} catch {
+		return;
+	}
+	if (!stats.isDirectory()) {
+		return;
+	}
+	watchDirectory(livePath);
+	let entries;
+	try {
+		entries = await readdir(livePath);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			return;
+		}
+		throw error;
+	}
+	for (const entry of entries) {
+		await watchRecursiveContents(
+			join(livePath, entry),
+			shouldPersist,
+			watchDirectory,
+		);
+	}
 }

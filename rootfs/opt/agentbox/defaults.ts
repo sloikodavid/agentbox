@@ -6,7 +6,9 @@ export const CONFIG_DEFAULTS = {
 	publicProxyUrlTemplate: "./proxy/{{port}}",
 	workspacePath: "/home/user/Desktop",
 	trustedProxyHops: 0,
-	enableMetrics: false,
+	disableMetrics: true,
+	disableFileDownloads: false,
+	disableFileUploads: false,
 	buildVersion: "unknown",
 	buildRevision: "unknown",
 	buildSource: "https://github.com/sloikodavid/agentbox",
@@ -39,5 +41,6 @@ export const PERSISTENCE_DEFAULTS = {
 	heartbeatIntervalMs: 5_000,
 	heartbeatMaxAgeMs: 15_000,
 	reconcileIntervalMs: 1_000,
+	fullReconcileIntervalMs: 600_000,
 	eventBatchWindowMs: 200,
 } as const;

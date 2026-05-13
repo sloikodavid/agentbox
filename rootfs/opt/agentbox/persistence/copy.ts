@@ -20,28 +20,34 @@ import { dirname, join, relative } from "node:path";
 export async function copyPersistedRoot(
 	persistedRootPath: string,
 	rootPath: string,
+	shouldCopy: (destination: string) => boolean = () => true,
 ): Promise<void> {
 	const restoredHardlinks = new Map<string, string>();
 	await walk(persistedRootPath, async (source) => {
 		const relativePath = relative(persistedRootPath, source);
 		if (!relativePath) {
-			return;
+			return true;
 		}
 		const destination = join(rootPath, relativePath);
+		if (!shouldCopy(destination)) {
+			return false;
+		}
 		const stats = await lstat(source);
-		await rm(destination, { recursive: true, force: true });
 		await mkdir(dirname(destination), { recursive: true });
 		if (stats.isSymbolicLink()) {
+			await rm(destination, { recursive: true, force: true });
 			await symlink(await readlink(source), destination);
 			await copyMetadata(source, destination);
-			return;
+			return false;
 		}
 		if (stats.isDirectory()) {
+			await removeIfNotDirectory(destination);
 			await mkdir(destination, { recursive: true, mode: stats.mode });
 			await copyMetadata(source, destination);
-			return;
+			return true;
 		}
 		if (stats.isFile()) {
+			await rm(destination, { recursive: true, force: true });
 			const hardlinkKey = `${stats.dev}:${stats.ino}`;
 			const existingHardlink = restoredHardlinks.get(hardlinkKey);
 			if (stats.nlink > 1 && existingHardlink) {
@@ -54,12 +60,13 @@ export async function copyPersistedRoot(
 			}
 			await copyMetadata(source, destination);
 		}
+		return false;
 	});
 }
 
 export async function walk(
 	path: string,
-	visitor: (path: string) => Promise<void> | void,
+	visitor: (path: string) => Promise<boolean | void> | boolean | void,
 ): Promise<void> {
 	let stats;
 	try {
@@ -67,8 +74,8 @@ export async function walk(
 	} catch {
 		return;
 	}
-	await visitor(path);
-	if (!stats.isDirectory()) {
+	const shouldDescend = await visitor(path);
+	if (!stats.isDirectory() || shouldDescend === false) {
 		return;
 	}
 	for (const entry of await readdir(path)) {
@@ -136,6 +143,20 @@ export async function isStoredFile(path: string): Promise<boolean> {
 	} catch {
 		return false;
 	}
+}
+
+async function removeIfNotDirectory(path: string): Promise<void> {
+	try {
+		if ((await lstat(path)).isDirectory()) {
+			return;
+		}
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			return;
+		}
+		throw error;
+	}
+	await rm(path, { recursive: true, force: true });
 }
 
 function ignoreUnsupported(error: unknown): void {

@@ -182,7 +182,10 @@ function removalSubtreeForLivePath(
 	return join(paths.removedFilesPath, relativeFromRoot(livePath, paths));
 }
 
-export async function applyRemovalMarkers(paths: RootfsPaths): Promise<void> {
+export async function applyRemovalMarkers(
+	paths: RootfsPaths,
+	shouldApply: (livePath: string) => boolean = () => true,
+): Promise<void> {
 	await walkRemovedMarkers(paths, async (marker) => {
 		if (!marker.endsWith(REMOVAL_SUFFIX)) {
 			return;
@@ -191,7 +194,11 @@ export async function applyRemovalMarkers(paths: RootfsPaths): Promise<void> {
 			0,
 			-REMOVAL_SUFFIX.length,
 		);
-		await rm(join(paths.rootPath, relativeMarker), {
+		const livePath = join(paths.rootPath, relativeMarker);
+		if (!shouldApply(livePath)) {
+			return;
+		}
+		await rm(livePath, {
 			recursive: true,
 			force: true,
 		});

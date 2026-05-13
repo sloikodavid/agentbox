@@ -154,16 +154,24 @@ describe("createGatewayServer", () => {
 		expect(await response.text()).toBe("Agentbox is starting\n");
 	});
 
-	test("serves metrics under the public base URL path when enabled", async () => {
+	test("serves metrics under the public base URL path when metrics are not disabled", async () => {
 		const harness = await startGatewayHarness({
 			config: {
 				publicUrl: "http://localhost:8080/agentbox",
-				enableMetrics: true,
+				disableMetrics: false,
 			},
 		});
 
 		expect(await harness.text("/agentbox/metrics")).toBe("agentbox_ready 1\n");
 		expect((await harness.fetch("/metrics")).status).toBe(404);
+	});
+
+	test("does not serve metrics by default", async () => {
+		const harness = await startGatewayHarness({
+			config: { publicUrl: "http://localhost:8080/agentbox" },
+		});
+
+		expect((await harness.fetch("/agentbox/metrics")).status).toBe(404);
 	});
 
 	test("preserves websocket upgrade handshakes", async () => {
@@ -627,7 +635,9 @@ function config(overrides: Partial<AgentboxConfig> = {}): AgentboxConfig {
 		publicUrl: "http://localhost:8080",
 		publicProxyUrlTemplate: "./proxy/{{port}}",
 		trustedProxyHops: 0,
-		enableMetrics: false,
+		disableMetrics: true,
+		disableFileDownloads: false,
+		disableFileUploads: false,
 		authType: "password",
 		password: "test",
 		buildVersion: "test",

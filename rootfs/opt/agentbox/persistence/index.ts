@@ -1,9 +1,17 @@
-import { spawn } from "node:child_process";
-import { link, lstat, mkdir, readlink, rm, symlink } from "node:fs/promises";
+import {
+	link,
+	lstat,
+	mkdir,
+	readlink,
+	realpath,
+	rm,
+	symlink,
+} from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { PERSISTENCE_HEARTBEAT_PATH } from "./constants.ts";
 export {
 	PERSISTENCE_EVENT_BATCH_WINDOW_MS,
+	PERSISTENCE_FULL_RECONCILE_INTERVAL_MS,
 	PERSISTENCE_HEARTBEAT_INTERVAL_MS,
 	PERSISTENCE_HEARTBEAT_MAX_AGE_MS,
 	PERSISTENCE_HEARTBEAT_PATH,
@@ -41,12 +49,14 @@ export type {
 	PersistenceWatcher,
 	PersistenceWatcherFailure,
 } from "./types.ts";
+import { reconcileRootfs, repairPersistedRootfs } from "./reconcile.ts";
 import { runPersistenceWatch } from "./watch.ts";
 
 class PersistenceImpl implements Persistence {
 	private readonly paths: RootfsPaths;
 	private readonly heartbeatPath: string;
 	private readonly hardlinks = new Map<string, string>();
+	private operationQueue: Promise<void> = Promise.resolve();
 
 	constructor(options: PersistenceOptions = {}) {
 		this.paths = rootfsPaths(options);
@@ -54,34 +64,36 @@ class PersistenceImpl implements Persistence {
 	}
 
 	async restore(): Promise<void> {
-		await prepareRootfsStorage(this.paths);
-		await run("rsync", [
-			"-a",
-			"-H",
-			"--numeric-ids",
-			`${this.paths.filesPath}/`,
-			this.paths.rootPath,
-		]).catch(async (error: unknown) => {
-			if (String(error).includes("ENOENT")) {
-				await copyPersistedRoot(this.paths.filesPath, this.paths.rootPath);
-				return;
-			}
-			throw error;
+		await this.runExclusive(async () => {
+			await prepareRootfsStorage(this.paths);
+			await copyPersistedRoot(
+				this.paths.filesPath,
+				this.paths.rootPath,
+				(path) => this.shouldPersist(path),
+			);
+			await applyRemovalMarkers(this.paths, (path) => this.shouldPersist(path));
 		});
-		await applyRemovalMarkers(this.paths);
 	}
 
 	async record(change: PersistenceChange): Promise<void> {
-		this.requireInsideRoot(change.livePath);
-		if (!this.shouldPersist(change.livePath)) {
-			return;
-		}
-		await prepareRootfsStorage(this.paths);
-		if (change.type === "present") {
-			await this.store(change.livePath);
-		} else {
-			await this.remove(change.livePath);
-		}
+		await this.runExclusive(async () => {
+			await prepareRootfsStorage(this.paths);
+			await this.recordOne(change);
+		});
+	}
+
+	async reconcile(livePath: string = this.paths.rootPath): Promise<void> {
+		await this.runExclusive(async () => {
+			await prepareRootfsStorage(this.paths);
+			await reconcileRootfs(
+				{
+					paths: this.paths,
+					record: (change) => this.recordOne(change),
+					shouldPersist: (path) => this.shouldPersist(path),
+				},
+				livePath,
+			);
+		});
 	}
 
 	async watch(): Promise<PersistenceWatcher> {
@@ -89,7 +101,8 @@ class PersistenceImpl implements Persistence {
 		return await runPersistenceWatch({
 			paths: this.paths,
 			heartbeatPath: this.heartbeatPath,
-			record: (change) => this.record(change),
+			reconcile: (livePath) => this.reconcile(livePath),
+			repair: () => this.repair(),
 			shouldPersist: (livePath) => this.shouldPersist(livePath),
 			log,
 		});
@@ -102,9 +115,48 @@ class PersistenceImpl implements Persistence {
 		);
 	}
 
+	private async repair(): Promise<void> {
+		await this.runExclusive(async () => {
+			await prepareRootfsStorage(this.paths);
+			await repairPersistedRootfs({
+				paths: this.paths,
+				record: (change) => this.recordOne(change),
+				shouldPersist: (path) => this.shouldPersist(path),
+			});
+		});
+	}
+
+	private async runExclusive(operation: () => Promise<void>): Promise<void> {
+		const run = this.operationQueue.then(operation, operation);
+		this.operationQueue = run.catch(() => {});
+		await run;
+	}
+
+	private async recordOne(change: PersistenceChange): Promise<void> {
+		this.requireInsideRoot(change.livePath);
+		if (!this.shouldPersist(change.livePath)) {
+			return;
+		}
+		if (change.type === "present") {
+			await this.store(change.livePath);
+		} else {
+			await this.remove(change.livePath);
+		}
+	}
+
 	private requireInsideRoot(livePath: string): void {
 		if (!isWithinRoot(livePath, resolve(this.paths.rootPath))) {
 			throw new Error(`${livePath} is outside ${this.paths.rootPath}`);
+		}
+	}
+
+	private async requireRealPathInsideRoot(livePath: string): Promise<void> {
+		const [resolvedRoot, resolvedPath] = await Promise.all([
+			realpath(this.paths.rootPath),
+			realpath(livePath),
+		]);
+		if (!isWithinRoot(resolvedPath, resolvedRoot)) {
+			throw new Error(`${livePath} resolves outside ${this.paths.rootPath}`);
 		}
 	}
 
@@ -117,6 +169,9 @@ class PersistenceImpl implements Persistence {
 			stats.isCharacterDevice()
 		) {
 			return;
+		}
+		if (!stats.isSymbolicLink()) {
+			await this.requireRealPathInsideRoot(livePath);
 		}
 
 		await this.storeAncestorMetadata(livePath);
@@ -184,20 +239,6 @@ export function createPersistence(
 	options: PersistenceOptions = {},
 ): Persistence {
 	return new PersistenceImpl(options);
-}
-
-async function run(command: string, args: readonly string[]): Promise<void> {
-	await new Promise<void>((resolvePromise, rejectPromise) => {
-		const child = spawn(command, args, { stdio: "inherit" });
-		child.on("exit", (code) => {
-			if (code === 0) {
-				resolvePromise();
-			} else {
-				rejectPromise(new Error(`${command} exited with ${code ?? "unknown"}`));
-			}
-		});
-		child.on("error", rejectPromise);
-	});
 }
 
 export async function runPersistenceCommand(

@@ -14,13 +14,17 @@ The image exposes one public listener: `PORT`. Agentbox-owned configuration uses
 
 `AGENTBOX_WORKSPACE_PATH` is the absolute path opened by code-server at startup. It defaults to `/home/user/Desktop`.
 
+`AGENTBOX_DISABLE_METRICS` controls the gateway `/metrics` endpoint. It defaults to `true`.
+
+The default code-server user settings disable telemetry and Workspace Trust for a VPS-like editing experience. Agentbox exposes selected code-server policy toggles with Agentbox-owned names: `AGENTBOX_DISABLE_FILE_DOWNLOADS` and `AGENTBOX_DISABLE_FILE_UPLOADS`.
+
 ## Gateway
 
 The gateway is a thin front door. It owns:
 
 - public `PORT` listener.
 - optional TLS termination from configured cert/key files.
-- health, readiness, and explicitly enabled metrics.
+- health, readiness, and optional metrics disabled by default.
 - persistence and code-server readiness checks.
 - exact `baseUrlPath` stripping.
 - HTTP and WebSocket forwarding to code-server.

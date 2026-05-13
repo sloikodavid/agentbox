@@ -15,6 +15,9 @@ describe("parseConfig", () => {
 		expect(config.publicProxyUrlTemplate).toBe("./proxy/{{port}}");
 		expect(config.authType).toBe("password");
 		expect(config.password).toBe("secret");
+		expect(config.disableMetrics).toBe(true);
+		expect(config.disableFileDownloads).toBe(false);
+		expect(config.disableFileUploads).toBe(false);
 	});
 
 	test("accepts hashed password auth", () => {
@@ -140,23 +143,33 @@ describe("parseConfig", () => {
 	test("parses explicit boolean and trusted proxy hop values", () => {
 		const config = parseConfig({
 			...passwordEnv,
-			AGENTBOX_ENABLE_METRICS: "yes",
+			AGENTBOX_DISABLE_METRICS: "0",
 			AGENTBOX_TRUSTED_PROXY_HOPS: "2",
+			AGENTBOX_DISABLE_FILE_DOWNLOADS: "true",
+			AGENTBOX_DISABLE_FILE_UPLOADS: "yes",
 		});
-		expect(config.enableMetrics).toBe(true);
+		expect(config.disableMetrics).toBe(false);
 		expect(config.trustedProxyHops).toBe(2);
+		expect(config.disableFileDownloads).toBe(true);
+		expect(config.disableFileUploads).toBe(true);
 		expect(
-			parseConfig({ ...passwordEnv, AGENTBOX_ENABLE_METRICS: "0" })
-				.enableMetrics,
-		).toBe(false);
+			parseConfig({ ...passwordEnv, AGENTBOX_DISABLE_METRICS: "1" })
+				.disableMetrics,
+		).toBe(true);
 	});
 
 	test("rejects invalid boolean and trusted proxy hop values", () => {
 		expect(() =>
-			parseConfig({ ...passwordEnv, AGENTBOX_ENABLE_METRICS: "maybe" }),
+			parseConfig({ ...passwordEnv, AGENTBOX_DISABLE_METRICS: "maybe" }),
 		).toThrow(ConfigError);
 		expect(() =>
 			parseConfig({ ...passwordEnv, AGENTBOX_TRUSTED_PROXY_HOPS: "1.5" }),
+		).toThrow(ConfigError);
+		expect(() =>
+			parseConfig({ ...passwordEnv, AGENTBOX_DISABLE_FILE_DOWNLOADS: "maybe" }),
+		).toThrow(ConfigError);
+		expect(() =>
+			parseConfig({ ...passwordEnv, AGENTBOX_DISABLE_FILE_UPLOADS: "maybe" }),
 		).toThrow(ConfigError);
 	});
 

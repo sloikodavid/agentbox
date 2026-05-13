@@ -36,9 +36,9 @@ export function planGatewayRequest(input: {
 		return { type: "readiness", statusCode: input.ready ? 200 : 503 };
 	}
 	if (input.url.pathname === publicAddress.metricsUrlPath) {
-		return input.config.enableMetrics
-			? { type: "metrics" }
-			: { type: "notFound" };
+		return input.config.disableMetrics
+			? { type: "notFound" }
+			: { type: "metrics" };
 	}
 
 	const target = proxyTarget(input.config, input.headers, input.url);

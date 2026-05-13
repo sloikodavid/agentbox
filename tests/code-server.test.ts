@@ -46,6 +46,30 @@ describe("code-server start plan", () => {
 		expect(plan.args[0]).toBe("/workspace");
 	});
 
+	test("maps Agentbox code-server policy toggles into code-server flags", () => {
+		const plan = codeServerStartPlan(
+			config({
+				disableFileDownloads: true,
+				disableFileUploads: true,
+			}),
+		);
+		expect(plan.args).toContain("--disable-file-downloads");
+		expect(plan.args).toContain("--disable-file-uploads");
+	});
+
+	test("omits disabled code-server policy flags", () => {
+		const plan = codeServerStartPlan(
+			config({
+				disableFileDownloads: false,
+				disableFileUploads: false,
+			}),
+		);
+		expect(plan.args).not.toContain("--disable-file-downloads");
+		expect(plan.args).not.toContain("--disable-file-uploads");
+		expect(plan.args).not.toContain("--disable-telemetry");
+		expect(plan.args).not.toContain("--disable-workspace-trust");
+	});
+
 	test("adds public base URL path and public proxy hostname template arguments", () => {
 		const plan = codeServerStartPlan(
 			config({
@@ -76,7 +100,9 @@ function config(overrides: Partial<AgentboxConfig> = {}): AgentboxConfig {
 		publicUrl: "http://localhost:8080",
 		publicProxyUrlTemplate: "./proxy/{{port}}",
 		trustedProxyHops: 0,
-		enableMetrics: false,
+		disableMetrics: true,
+		disableFileDownloads: false,
+		disableFileUploads: false,
 		authType: "password",
 		password: "secret",
 		buildVersion: "test",

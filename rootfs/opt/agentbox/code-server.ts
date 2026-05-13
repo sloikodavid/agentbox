@@ -29,6 +29,12 @@ export function codeServerStartPlan(
 	if (CODE_SERVER_DEFAULTS.disableUpdateCheck) {
 		args.push("--disable-update-check");
 	}
+	if (config.disableFileDownloads) {
+		args.push("--disable-file-downloads");
+	}
+	if (config.disableFileUploads) {
+		args.push("--disable-file-uploads");
+	}
 	if (publicAddress.baseUrlPath !== "/") {
 		args.push("--abs-proxy-base-path", publicAddress.baseUrlPath);
 	}
