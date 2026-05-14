@@ -35,18 +35,20 @@ description: Use when you're not sure where to look, need to find the right file
   pre-commit
 .vscode/
   extensions.json
-docs/
-  architecture.md
 packages/
   persistd/
     cmd/
       persistd/
+        daemon.go
         main_test.go
         main.go
     internal/
       audit/
         audit_test.go
         audit.go
+      check/
+        check_test.go
+        check.go
       config/
         config_test.go
         config.go
@@ -71,6 +73,9 @@ packages/
       objectstore/
         objectstore_test.go
         objectstore.go
+      processor/
+        processor_test.go
+        processor.go
       restore/
         lchown_linux.go
         lchown_other.go
@@ -92,10 +97,6 @@ packages/
         watcher_other.go
     go.mod
     go.sum
-research/
-  inotify-node.md
-  local-persistence-performance.md
-  watcher-architectures.md
 rootfs/
   etc/
     sudoers.d/
@@ -141,14 +142,6 @@ rootfs/
         public-address.ts
         readiness.ts
         routing.ts
-      persistence/
-        constants.ts
-        copy.ts
-        index.ts
-        reconcile.ts
-        rootfs.ts
-        types.ts
-        watch.ts
       code-server.ts
       config.ts
       defaults.ts
@@ -166,7 +159,6 @@ tests/
   code-server.test.ts
   config.test.ts
   gateway.test.ts
-  persistence.test.ts
 vendor/
   code-server/
     overlay/
@@ -188,9 +180,7 @@ Dockerfile
 eslint.config.mjs
 LICENSE
 package.json
-PLAN.md
 pnpm-lock.yaml
-progress.md
 renovate.json
 SECURITY.md
 TODO.md

@@ -33,6 +33,7 @@ What we often collapse, depending on the context:
 - Kind -> Type.
 - Verify -> Check?
 - Policy -> Config?
+- Main -> Index.
 
 ## 4. No Reward Hacking
 

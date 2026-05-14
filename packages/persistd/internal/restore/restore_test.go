@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/sloikodavid/agentbox/packages/persistd/internal/config"
@@ -164,8 +165,8 @@ func TestRun_CreatesDirectoriesAndFiles(t *testing.T) {
 }
 
 func TestRun_RestoresSymlink(t *testing.T) {
-	if os.Getenv("SKIP_SYMLINK_TESTS") != "" {
-		t.Skip("symlink tests disabled")
+	if runtime.GOOS != "linux" {
+		t.Skip("symlink target semantics are Linux-only; persistd runs in a Linux container")
 	}
 	live := t.TempDir()
 	paths := setupPaths(t, live)

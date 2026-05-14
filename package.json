@@ -8,7 +8,7 @@
 	"scripts": {
 		"dev": "docker compose up --build",
 		"prepare": "husky",
-		"check": "tsc --noEmit && vitest run --coverage && eslint . && node scripts/format.mjs --check && pnpm dlx --package renovate renovate-config-validator renovate.json",
+		"check": "tsc --noEmit && vitest run --coverage && eslint . && go -C packages/persistd vet ./... && go -C packages/persistd test ./... && node scripts/format.mjs --check && pnpm dlx --package renovate renovate-config-validator renovate.json",
 		"fix": "node scripts/format.mjs --write && eslint . --fix"
 	},
 	"prettier": {

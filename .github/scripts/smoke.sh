@@ -257,49 +257,35 @@ assert_default_container() {
 }
 
 assert_rootfs_persistence() {
-  log "checking rootfs persistence"
+  log "checking persistd persistence"
+
   docker exec "$CONTAINER_NAME" \
     sudo -u user sh -lc 'printf hello > /home/user/Desktop/smoke.txt'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" \
-    sh -lc 'test "$(cat /data/rootfs-persistence/files/home/user/Desktop/smoke.txt)" = hello'
-
   docker exec "$CONTAINER_NAME" sh -lc 'printf restored > /custom-restore'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" \
-    sh -lc 'test "$(cat /data/rootfs-persistence/files/custom-restore)" = restored'
-
-  docker exec "$CONTAINER_NAME" sh -lc 'printf persisted > /custom-persist'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/rootfs-persistence/files/custom-persist'
-
-  docker exec "$CONTAINER_NAME" sh -lc 'rm /custom-persist'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" \
-    sh -lc 'test -f /data/rootfs-persistence/removed-files/custom-persist.__removed__'
-
   docker exec "$CONTAINER_NAME" sh -lc 'mkdir -p /foo123 && printf nested > /foo123/nested.txt'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" \
-    sh -lc 'test "$(cat /data/rootfs-persistence/files/foo123/nested.txt)" = nested'
 
-  docker exec "$CONTAINER_NAME" sh -lc 'printf changed > /foo123/nested.txt'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" \
-    sh -lc 'test "$(cat /data/rootfs-persistence/files/foo123/nested.txt)" = changed'
-
-  docker exec "$CONTAINER_NAME" sh -lc 'rm /foo123/nested.txt'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" \
-    sh -lc 'test -f /data/rootfs-persistence/removed-files/foo123/nested.txt.__removed__'
+  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/persistence/db.sqlite'
+  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -d /data/persistence/objects/blake3'
+  sleep 5
 
   docker restart "$CONTAINER_NAME" >/dev/null
   wait_for_url "$SMOKE_DEFAULT_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
+  docker exec "$CONTAINER_NAME" sh -lc 'test "$(cat /home/user/Desktop/smoke.txt)" = hello'
   docker exec "$CONTAINER_NAME" sh -lc 'test "$(cat /custom-restore)" = restored'
-  docker exec "$CONTAINER_NAME" sh -lc 'test ! -e /custom-persist'
   docker exec "$CONTAINER_NAME" sh -lc 'test -d /foo123'
-  docker exec "$CONTAINER_NAME" sh -lc 'test ! -e /foo123/nested.txt'
+  docker exec "$CONTAINER_NAME" sh -lc 'test "$(cat /foo123/nested.txt)" = nested'
+
+  docker exec "$CONTAINER_NAME" sh -lc 'rm /custom-restore'
+  sleep 5
+  docker restart "$CONTAINER_NAME" >/dev/null
+  wait_for_url "$SMOKE_DEFAULT_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
+  docker exec "$CONTAINER_NAME" sh -lc 'test ! -e /custom-restore'
 
   docker rm -f "$CONTAINER_NAME" >/dev/null
   run_default_container
   wait_for_url "$SMOKE_DEFAULT_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
-  docker exec "$CONTAINER_NAME" sh -lc 'test "$(cat /custom-restore)" = restored'
-  docker exec "$CONTAINER_NAME" sh -lc 'test ! -e /custom-persist'
+  docker exec "$CONTAINER_NAME" sh -lc 'test "$(cat /home/user/Desktop/smoke.txt)" = hello'
   docker exec "$CONTAINER_NAME" sh -lc 'test -d /foo123'
-  docker exec "$CONTAINER_NAME" sh -lc 'test ! -e /foo123/nested.txt'
 }
 
 assert_custom_container() {
@@ -359,7 +345,7 @@ assert_custom_container() {
   rm -f "$cookie_jar"
 
   docker exec "$CONTAINER_NAME" sh -lc 'printf custom > /custom-volume-path'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /persist/rootfs-persistence/files/custom-volume-path'
+  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /persist/persistence/db.sqlite'
 }
 
 assert_tls_container() {

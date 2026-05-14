@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -84,12 +85,12 @@ func ResolvePaths(env func(string) string) Paths {
 	if volume == "" {
 		volume = "/data"
 	}
-	persistence := filepath.Join(volume, "persistence")
+	persistence := path.Join(volume, "persistence")
 	p := Paths{
 		Volume:    volume,
-		Config:    filepath.Join(persistence, "config.json"),
-		DB:        filepath.Join(persistence, "db.sqlite"),
-		Objects:   filepath.Join(persistence, "objects"),
+		Config:    path.Join(persistence, "config.json"),
+		DB:        path.Join(persistence, "db.sqlite"),
+		Objects:   path.Join(persistence, "objects"),
 		Heartbeat: "/run/agentbox/persistd.ready",
 	}
 	if v := env("AGENTBOX_PERSISTENCE_CONFIG_PATH"); v != "" {

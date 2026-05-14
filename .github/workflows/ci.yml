@@ -28,5 +28,3 @@ jobs:
           cache-dependency-path: packages/persistd/go.sum
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      - run: go test ./...
-        working-directory: packages/persistd

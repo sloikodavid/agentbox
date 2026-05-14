@@ -1,3 +1,0 @@
-Research subagent started: investigating production-grade file watching/sync architectures (Watchman, Syncthing, Mutagen, rsync/inotify, chokidar/write-file-atomic), focusing on event+crawl repair, backpressure, clocks/cookies, incremental snapshots, and bounded reconciliation.
-
-Inotify/Node research progress (2026-05-13): completed source review of Linux man-pages for inotify/fanotify, Node fs.watch docs/source, libuv inotify mapping, Docker seccomp, and overlayfs docs. Consolidated brief written to research/inotify-node.md. Key conclusion: watcher-only rootfs persistence cannot be 100% correct; use watcher hints plus crawl/reconciliation and overflow recovery.

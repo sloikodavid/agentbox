@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -103,6 +104,9 @@ func TestAudit_ExcludedSubtreeNotDescended(t *testing.T) {
 }
 
 func TestAudit_DeletionsTombstonedOnSecondPass(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("reconcileDirectory uses SQL LIKE 'path/%' which assumes forward-slash paths; persistd runs in a Linux container")
+	}
 	live := t.TempDir()
 	doomed := filepath.Join(live, "doomed.txt")
 	mustWrite(t, doomed, "transient")

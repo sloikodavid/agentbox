@@ -55,6 +55,10 @@ func Open(objectsRoot string) (*Store, error) {
 	return &Store{root: objectsRoot, algoDir: algoDir}, nil
 }
 
+// AlgorithmDir returns the absolute directory holding all objects for
+// the configured algorithm (e.g. .../objects/blake3).
+func (s *Store) AlgorithmDir() string { return s.algoDir }
+
 // Path returns the absolute on-disk path for an object identified by
 // (algorithm, hash). The file may or may not exist.
 func (s *Store) Path(algorithm, hash string) (string, error) {

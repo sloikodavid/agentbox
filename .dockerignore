@@ -2,3 +2,4 @@
 !Dockerfile
 !rootfs/**
 !vendor/**
+!packages/**
