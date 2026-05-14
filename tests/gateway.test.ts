@@ -384,9 +384,12 @@ describe("createGatewayServer", () => {
 		});
 	});
 
-	test("fails readiness when the persistence heartbeat has no active watchers", async () => {
+	test("fails readiness when persistence reports status=disabled", async () => {
 		const heartbeatPath = await tempHeartbeatPath();
-		await writePersistenceHeartbeat(heartbeatPath, { watcherCount: 0 });
+		await writePersistenceHeartbeat(heartbeatPath, {
+			status: "disabled",
+			degradedReasons: ["restore failed"],
+		});
 		const harness = await startGatewayHarness({
 			ready: false,
 			heartbeatPath,
@@ -396,26 +399,22 @@ describe("createGatewayServer", () => {
 		expect(harness.gateway.health().checks).toContainEqual({
 			name: "persistence",
 			status: "fail",
-			message: "persistence watcher is not running",
+			message: "persistence is disabled: restore failed",
 		});
 	});
 
-	test("fails readiness when a persistence watcher failed", async () => {
+	test("passes readiness when persistence is degraded (audit backlog is not readiness fail)", async () => {
 		const heartbeatPath = await tempHeartbeatPath();
 		await writePersistenceHeartbeat(heartbeatPath, {
-			failedWatchers: [{ path: "/home", message: "watch failed" }],
+			status: "degraded",
+			degradedReasons: ["audit backlog growing"],
 		});
 		const harness = await startGatewayHarness({
-			ready: false,
+			ready: true,
 			heartbeatPath,
 		});
 
-		expect(harness.gateway.health().ready).toBe(false);
-		expect(harness.gateway.health().checks).toContainEqual({
-			name: "persistence",
-			status: "fail",
-			message: "persistence watcher failed for /home",
-		});
+		expect(harness.gateway.health().ready).toBe(true);
 	});
 });
 
@@ -524,11 +523,9 @@ async function tempHeartbeatPath(): Promise<string> {
 async function writePersistenceHeartbeat(
 	path: string,
 	overrides: {
-		readonly watcherCount?: number;
-		readonly failedWatchers?: readonly {
-			readonly path: string;
-			readonly message: string;
-		}[];
+		readonly status?: "ok" | "degraded" | "disabled";
+		readonly mode?: "watch" | "restore" | "starting";
+		readonly degradedReasons?: readonly string[];
 	} = {},
 ): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
@@ -536,8 +533,13 @@ async function writePersistenceHeartbeat(
 		path,
 		`${JSON.stringify({
 			updatedAt: new Date().toISOString(),
-			watcherCount: overrides.watcherCount ?? 1,
-			failedWatchers: overrides.failedWatchers ?? [],
+			status: overrides.status ?? "ok",
+			mode: overrides.mode ?? "watch",
+			watcherCount: 1,
+			degradedReasons: overrides.degradedReasons ?? [],
+			dirtyBacklog: 0,
+			auditCursorCount: 0,
+			lastError: null,
 		})}\n`,
 	);
 }

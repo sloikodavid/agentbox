@@ -54,6 +54,17 @@ packages/
         db.go
         objects.go
         paths.go
+      heartbeat/
+        heartbeat_test.go
+        heartbeat.go
+      objectstore/
+        objectstore_test.go
+        objectstore.go
+      restore/
+        lchown_linux.go
+        lchown_other.go
+        restore_test.go
+        restore.go
       storage/
         storage_test.go
         storage.go

@@ -37,7 +37,7 @@ export const CHILD_PROCESS_DEFAULTS = {
 
 export const PERSISTENCE_DEFAULTS = {
 	rootPath: "/",
-	heartbeatPath: "/run/agentbox/persistence.ready",
+	heartbeatPath: "/run/agentbox/persistd.ready",
 	heartbeatIntervalMs: 5_000,
 	heartbeatMaxAgeMs: 15_000,
 	reconcileIntervalMs: 1_000,

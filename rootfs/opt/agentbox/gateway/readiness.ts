@@ -1,6 +1,17 @@
 import { request as httpRequest } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import type { PersistenceHeartbeat } from "../persistence/index.ts";
+
+// PersistdHeartbeat mirrors the JSON document written by the Go persistd
+// daemon. The shape is part of the contract; only required fields are
+// validated here so additive fields don't fail the parse.
+type PersistdHeartbeatStatus = "ok" | "degraded" | "disabled";
+type PersistdHeartbeatMode = "watch" | "restore" | "starting";
+interface PersistdHeartbeat {
+	readonly updatedAt: string;
+	readonly status: PersistdHeartbeatStatus;
+	readonly mode: PersistdHeartbeatMode;
+	readonly degradedReasons: readonly string[];
+}
 
 export interface GatewayHealthCheck {
 	readonly name: "code_server" | "persistence";
@@ -188,7 +199,7 @@ async function checkPersistence(
 				message: "persistence heartbeat is stale",
 			};
 		}
-		const heartbeat = await readPersistenceHeartbeat(
+		const heartbeat = await readPersistdHeartbeat(
 			options.persistenceHeartbeatPath,
 		);
 		if (!heartbeat) {
@@ -198,25 +209,21 @@ async function checkPersistence(
 				message: "persistence heartbeat is invalid",
 			};
 		}
-		if (heartbeat.watcherCount < 1) {
+		if (heartbeat.status === "disabled") {
+			const reason = heartbeat.degradedReasons[0] ?? "persistence disabled";
 			return {
 				name: "persistence",
 				status: "fail",
-				message: "persistence watcher is not running",
-			};
-		}
-		const failedWatcher = heartbeat.failedWatchers[0];
-		if (failedWatcher) {
-			return {
-				name: "persistence",
-				status: "fail",
-				message: `persistence watcher failed for ${failedWatcher.path}`,
+				message: `persistence is disabled: ${reason}`,
 			};
 		}
 		return {
 			name: "persistence",
 			status: "pass",
-			message: "persistence is healthy",
+			message:
+				heartbeat.status === "ok"
+					? "persistence is healthy"
+					: `persistence is degraded: ${heartbeat.degradedReasons[0] ?? "unknown"}`,
 		};
 	} catch {
 		return {
@@ -227,19 +234,20 @@ async function checkPersistence(
 	}
 }
 
-async function readPersistenceHeartbeat(
+async function readPersistdHeartbeat(
 	path: string,
-): Promise<PersistenceHeartbeat | null> {
+): Promise<PersistdHeartbeat | null> {
 	try {
 		const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
 		if (
 			typeof parsed === "object" &&
 			parsed !== null &&
-			typeof (parsed as PersistenceHeartbeat).updatedAt === "string" &&
-			typeof (parsed as PersistenceHeartbeat).watcherCount === "number" &&
-			Array.isArray((parsed as PersistenceHeartbeat).failedWatchers)
+			typeof (parsed as PersistdHeartbeat).updatedAt === "string" &&
+			typeof (parsed as PersistdHeartbeat).status === "string" &&
+			typeof (parsed as PersistdHeartbeat).mode === "string" &&
+			Array.isArray((parsed as PersistdHeartbeat).degradedReasons)
 		) {
-			return parsed as PersistenceHeartbeat;
+			return parsed as PersistdHeartbeat;
 		}
 	} catch {
 		return null;
