@@ -31,6 +31,8 @@ What we often collapse, depending on the context:
 - Mode -> Type.
 - Material -> Contents.
 - Kind -> Type.
+- Verify -> Check?
+- Policy -> Config?
 
 ## 4. No Reward Hacking
 
