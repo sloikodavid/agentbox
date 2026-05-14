@@ -48,6 +48,21 @@ RUN case "${TARGETARCH}" in \
 
 COPY vendor/code-server/overlay/ /opt/code-server/current/
 
+FROM golang:1.24-trixie AS persistd-builder
+
+ARG TARGETARCH
+
+ENV CGO_ENABLED=0 \
+  GOFLAGS=-trimpath
+
+WORKDIR /src/persistd
+
+COPY packages/persistd/ ./
+RUN go mod download
+
+RUN GOOS=linux GOARCH="${TARGETARCH}" \
+  go build -ldflags="-s -w" -o /out/persistd ./cmd/persistd
+
 FROM node:26.1.0-trixie-slim@sha256:424cafd2a035ed2b2d74acc3142b68b426fb62a47742c80a75e7117db02d6b30 AS runtime
 
 ARG AGENTBOX_BUILD_VERSION=unknown
@@ -168,6 +183,7 @@ RUN groupmod --new-name user node \
   && mkdir -p /home/user
 
 COPY --from=code-server-installer /opt/code-server/current /opt/code-server/current
+COPY --from=persistd-builder /out/persistd /opt/agentbox/bin/persistd
 COPY rootfs/ /
 
 RUN find / -xdev -name .gitkeep -type f -delete \

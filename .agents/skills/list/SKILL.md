@@ -37,6 +37,28 @@ description: Use when you're not sure where to look, need to find the right file
   extensions.json
 docs/
   architecture.md
+packages/
+  persistd/
+    cmd/
+      persistd/
+        main_test.go
+        main.go
+    internal/
+      config/
+        config_test.go
+        config.go
+      db/
+        migrations/
+          0001_initial.sql
+        db_test.go
+        db.go
+        objects.go
+        paths.go
+      storage/
+        storage_test.go
+        storage.go
+    go.mod
+    go.sum
 research/
   inotify-node.md
   local-persistence-performance.md
