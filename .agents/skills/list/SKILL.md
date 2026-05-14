@@ -44,6 +44,9 @@ packages/
         main_test.go
         main.go
     internal/
+      audit/
+        audit_test.go
+        audit.go
       config/
         config_test.go
         config.go
@@ -65,9 +68,19 @@ packages/
         lchown_other.go
         restore_test.go
         restore.go
+      scheduler/
+        budget.go
+        dirty.go
+        scheduler_test.go
+        scheduler.go
       storage/
         storage_test.go
         storage.go
+      watch/
+        watch.go
+        watcher_linux_test.go
+        watcher_linux.go
+        watcher_other.go
     go.mod
     go.sum
 research/
