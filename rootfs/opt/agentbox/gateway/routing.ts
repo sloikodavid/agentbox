@@ -149,6 +149,8 @@ const HOP_BY_HOP_HEADERS = new Set([
 	"trailer",
 	"transfer-encoding",
 	"upgrade",
+	"proxy-connection",
+	"http2-settings",
 ]);
 
 function filterHeadersForRequest(

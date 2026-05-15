@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "vitest";
 import {
 	createGatewayServer,
+	type GatewayTimings,
 	type GatewayServer,
 } from "../rootfs/opt/agentbox/gateway/index.ts";
 import type { AgentboxConfig } from "../rootfs/opt/agentbox/config.ts";
@@ -109,6 +110,21 @@ describe("createGatewayServer", () => {
 			"proxied:/path?q=1:/agentbox",
 		);
 		expect((await harness.fetch("/agentbox2/path")).status).toBe(404);
+	});
+
+	test("times out HTTP proxy attempts when code-server accepts but never responds", async () => {
+		const harness = await startGatewayHarness({
+			timings: { proxyToCodeServerTimeoutMs: 50 },
+			codeServerRequest() {
+				// Hold the connection open without sending response headers.
+			},
+		});
+
+		const response = await harness.fetch("/", {
+			signal: AbortSignal.timeout(1_000),
+		});
+		expect(response.status).toBe(502);
+		expect(await response.text()).toBe("bad gateway\n");
 	});
 
 	test("rejects requests outside the public base URL path before readiness gating", async () => {
@@ -213,6 +229,7 @@ describe("createGatewayServer", () => {
 				response.end(
 					[
 						headerValue(request.headers["x-remove"]),
+						headerValue(request.headers["proxy-connection"]),
 						headerValue(request.headers["x-forwarded-host"]),
 						headerValue(request.headers["x-forwarded-proto"]),
 					].join(":"),
@@ -224,10 +241,11 @@ describe("createGatewayServer", () => {
 			await harness.requestText("/", "box.example.com", {
 				connection: "keep-alive, x-remove",
 				"x-remove": "nope",
+				"proxy-connection": "keep-alive",
 				"x-forwarded-host": "evil.example",
 				"x-forwarded-proto": "https",
 			}),
-		).toBe(":box.example.com:http");
+		).toBe("::box.example.com:http");
 	});
 
 	test("forwards trusted proxy hop headers", async () => {
@@ -354,6 +372,25 @@ describe("createGatewayServer", () => {
 		expect(response.toLowerCase()).toContain("x-blocked: yes");
 	});
 
+	test("strips upstream hop-by-hop headers from websocket upgrades", async () => {
+		const harness = await startGatewayHarness({
+			codeServerUpgrade(_request, socket) {
+				socket.end(
+					"HTTP/1.1 101 Switching Protocols\r\n" +
+						"Upgrade: websocket\r\n" +
+						"Connection: Upgrade, X-Remove\r\n" +
+						"X-Remove: leaked\r\n" +
+						"X-Keep: ok\r\n\r\n",
+				);
+			},
+		});
+
+		const response = await harness.rawUpgrade("/ws");
+		expect(response.toLowerCase()).toContain("connection: upgrade");
+		expect(response.toLowerCase()).toContain("x-keep: ok");
+		expect(response.toLowerCase()).not.toContain("x-remove:");
+	});
+
 	test("allows readiness when code-server is idle but accepting connections", async () => {
 		const harness = await startGatewayHarness({ healthStatus: "expired" });
 
@@ -435,6 +472,7 @@ interface GatewayHarnessOptions {
 	readonly ready?: boolean;
 	readonly heartbeatPath?: string;
 	readonly healthStatus?: string;
+	readonly timings?: Partial<GatewayTimings>;
 	readonly config?: Partial<AgentboxConfig>;
 	readonly codeServerRequest?: (
 		request: IncomingMessage,
@@ -480,6 +518,7 @@ async function startGatewayHarness(
 		codeServerOrigin: new URL(`http://127.0.0.1:${codeServerAddress.port}`),
 		persistenceHeartbeatPath: heartbeatPath,
 		log: () => {},
+		...(options.timings ? { timings: options.timings } : {}),
 	});
 	await gateway.start();
 	gateways.push(gateway);

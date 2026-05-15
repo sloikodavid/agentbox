@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
 	codeServerConfigYaml,
+	codeServerLaunchScript,
 	codeServerStartPlan,
 } from "../rootfs/opt/agentbox/code-server.ts";
 import type { AgentboxConfig } from "../rootfs/opt/agentbox/config.ts";
@@ -88,6 +89,20 @@ describe("code-server start plan", () => {
 		expect(codeServerConfigYaml(config())).toBe(
 			'bind-addr: 127.0.0.1:13337\nauth: password\npassword: "secret"\ncert: false\n',
 		);
+	});
+
+	test("renders an exec launch script so supervisor owns code-server directly", () => {
+		const plan = codeServerStartPlan(config({ workspacePath: "/work'space" }), {
+			PATH: "/bin:/usr/bin",
+		});
+
+		const script = codeServerLaunchScript(plan);
+		expect(script).toContain("set -euo pipefail");
+		expect(script).toContain("exec env -i");
+		expect(script).toContain("'PATH=/bin:/usr/bin'");
+		expect(script).toContain("'\"'\"'");
+		expect(script).toContain("'/usr/local/bin/code-server'");
+		expect(script).toContain("'--config' '/run/code-server/config.yaml'");
 	});
 });
 

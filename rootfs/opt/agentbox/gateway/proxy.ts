@@ -36,6 +36,22 @@ export function createGatewayProxy(options: {
 			url: URL,
 			target: GatewayProxyTarget,
 		): void {
+			let failed = false;
+			const failHttpProxy = (message: string): void => {
+				if (failed) {
+					return;
+				}
+				failed = true;
+				options.log(message);
+				if (response.destroyed) {
+					return;
+				}
+				if (!response.headersSent) {
+					sendText(response, 502, "bad gateway\n");
+				} else {
+					response.destroy();
+				}
+			};
 			const proxyRequest = httpRequest(
 				{
 					host: origin.hostname,
@@ -45,20 +61,28 @@ export function createGatewayProxy(options: {
 					headers: target.headers,
 				},
 				(proxyResponse) => {
+					proxyRequest.setTimeout(0);
 					response.writeHead(
 						proxyResponse.statusCode ?? 502,
 						filterHeadersForResponse(proxyResponse.headers),
 					);
+					proxyResponse.on("error", () => response.destroy());
 					proxyResponse.pipe(response);
 				},
 			);
 
-			proxyRequest.on("error", (error) => {
-				options.log(`proxy failed: ${String(error)}`);
-				if (!response.headersSent) {
-					sendText(response, 502, "bad gateway\n");
-				} else {
-					response.destroy();
+			proxyRequest.setTimeout(options.proxyToCodeServerTimeoutMs, () => {
+				failHttpProxy("proxy timed out");
+				proxyRequest.destroy();
+			});
+			proxyRequest.on("error", (error) =>
+				failHttpProxy(`proxy failed: ${String(error)}`),
+			);
+			request.on("aborted", () => proxyRequest.destroy());
+			request.on("error", () => proxyRequest.destroy());
+			response.on("close", () => {
+				if (!response.writableEnded) {
+					proxyRequest.destroy();
 				}
 			});
 
@@ -126,7 +150,7 @@ export function createGatewayProxy(options: {
 					proxyResponse.httpVersion,
 					proxyResponse.statusCode ?? 101,
 					proxyResponse.statusMessage ?? "Switching Protocols",
-					proxyResponse.headers,
+					filterHeadersForUpgradeResponse(proxyResponse.headers),
 				);
 				if (proxyHead.length > 0) {
 					socket.write(proxyHead);
@@ -175,22 +199,15 @@ const HOP_BY_HOP_HEADERS = new Set([
 	"trailer",
 	"transfer-encoding",
 	"upgrade",
+	"proxy-connection",
+	"http2-settings",
 ]);
 
 function filterHeadersForResponse(
 	headers: IncomingMessage["headers"],
 ): Record<string, string | string[]> {
 	const filtered: Record<string, string | string[]> = {};
-	const connectionTokens = new Set(
-		String(
-			Array.isArray(headers.connection)
-				? headers.connection.join(",")
-				: (headers.connection ?? ""),
-		)
-			.split(",")
-			.map((token) => token.trim().toLowerCase())
-			.filter(Boolean),
-	);
+	const connectionTokens = connectionHeaderTokens(headers.connection);
 	for (const [name, value] of Object.entries(headers)) {
 		const lowerName = name.toLowerCase();
 		if (
@@ -202,6 +219,30 @@ function filterHeadersForResponse(
 		}
 	}
 	return filtered;
+}
+
+function filterHeadersForUpgradeResponse(
+	headers: IncomingMessage["headers"],
+): Record<string, string | string[]> {
+	const filtered = filterHeadersForResponse(headers);
+	if (headers.upgrade !== undefined) {
+		filtered.upgrade = headers.upgrade;
+	}
+	if (connectionHeaderTokens(headers.connection).has("upgrade")) {
+		filtered.connection = "Upgrade";
+	}
+	return filtered;
+}
+
+function connectionHeaderTokens(
+	value: string | readonly string[] | undefined,
+): Set<string> {
+	return new Set(
+		String(Array.isArray(value) ? value.join(",") : (value ?? ""))
+			.split(",")
+			.map((token) => token.trim().toLowerCase())
+			.filter(Boolean),
+	);
 }
 
 export function writeUpgradeError(
