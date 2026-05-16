@@ -26,10 +26,13 @@ artifact-source: upstream release tarballs for now
 
 ## Patch list
 
-| File                                                        | Purpose                                                                                         | Upstream area      | Revisit trigger                                      |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------ | ---------------------------------------------------- |
-| `overlay/src/browser/pages/login.html`                      | Minimal Agentbox login page using upstream login mechanics.                                     | Browser login page | Login route/template changes upstream.               |
-| `patches/0001-gate-code-server-on-persistd-readiness.patch` | Extends `/healthz` with persistd readiness and serves the startup page until persistd is ready. | Node routes        | Health route or route registration changes upstream. |
+| File                                                                    | Purpose                                                                                                                            | Upstream area          | Revisit trigger                                                                  |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | -------------------------------------------------------------------------------- |
+| `overlay/src/browser/pages/login.html`                                  | Minimal Agentbox login page using upstream login mechanics.                                                                        | Browser login page     | Login route/template changes upstream.                                           |
+| `overlay/lib/vscode/out/vs/code/browser/workbench/workbench-mobile.css` | Contains the workbench viewport on narrow screens and lets the editor area shrink instead of forcing page-level horizontal scroll. | VS Code workbench CSS  | Workbench part class or bundled workbench path changes upstream.                 |
+| `overlay/lib/vscode/out/vs/code/browser/workbench/workbench-mobile.js`  | Keeps side bars and the panel from crowding each other on narrow screens, and clamps editor/panel widths to the visible viewport.  | VS Code workbench DOM  | Side bar or panel action labels, or workbench part class names, change upstream. |
+| `patches/0001-gate-code-server-on-persistd-readiness.patch`             | Extends `/healthz` with persistd readiness and serves the startup page until persistd is ready.                                    | Node routes            | Health route or route registration changes upstream.                             |
+| `patches/0002-load-workbench-mobile.patch`                              | Loads the Agentbox mobile workbench stylesheet and script from the VS Code workbench page.                                         | VS Code workbench HTML | Workbench HTML template path or asset loading changes upstream.                  |
 
 ## Update checklist
 

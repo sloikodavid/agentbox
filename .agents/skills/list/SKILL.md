@@ -156,12 +156,22 @@ tests/
 vendor/
   code-server/
     overlay/
+      lib/
+        vscode/
+          out/
+            vs/
+              code/
+                browser/
+                  workbench/
+                    workbench-mobile.css
+                    workbench-mobile.js
       src/
         browser/
           pages/
             login.html
     patches/
       0001-gate-code-server-on-persistd-readiness.patch
+      0002-load-workbench-mobile.patch
     README.md
 .dockerignore
 .editorconfig
