@@ -136,8 +136,7 @@ rootfs/
       .bashrc
   opt/
     agentbox/
-      services/
-        code-server.sh
+      code-server.sh
       entrypoint.sh
       runtime.ts
   usr/

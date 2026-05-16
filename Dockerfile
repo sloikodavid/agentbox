@@ -198,7 +198,7 @@ RUN find / -xdev -name .gitkeep -type f -delete \
   && chown -R user:user /home/user \
   && chmod 0440 /etc/sudoers.d/user \
   && chmod +x /opt/agentbox/entrypoint.sh \
-  && chmod +x /opt/agentbox/services/code-server.sh \
+  && chmod +x /opt/agentbox/code-server.sh \
   && ln -sf /opt/code-server/current/lib/vscode/bin/remote-cli/code-server /usr/local/bin/code \
   && ln -sf /opt/code-server/current/bin/code-server /usr/local/bin/code-server \
   && update-desktop-database /usr/share/applications \

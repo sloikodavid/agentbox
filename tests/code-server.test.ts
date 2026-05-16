@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 describe("code-server launcher", () => {
 	test("uses native code-server config with only a port default", () => {
 		const script = readFileSync(
-			resolve("rootfs/opt/agentbox/services/code-server.sh"),
+			resolve("rootfs/opt/agentbox/code-server.sh"),
 			"utf8",
 		);
 
