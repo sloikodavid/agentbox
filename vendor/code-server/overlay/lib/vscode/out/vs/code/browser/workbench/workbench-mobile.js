@@ -2,6 +2,28 @@
 	const narrow = window.matchMedia("(max-width: 600px)");
 	let previous = null;
 	let pending = false;
+	let latePasses = [];
+	let overlayBackGuardArmed = false;
+	let overlayBackGuardDisarming = false;
+
+	const overlaySelectors = [
+		".monaco-menu-container",
+		".action-list-submenu-panel",
+		".quick-input-widget",
+		".monaco-hover:not(.hidden)",
+		".editor-widget",
+		".suggest-details-container",
+		".monaco-dialog-modal-block",
+		".monaco-modal-editor-block",
+		".notifications-center",
+		".notification-toast-container",
+		".context-view",
+		".monaco-dialog-box",
+		".suggest-widget",
+		".parameter-hints-widget",
+		".rename-box",
+		".find-widget",
+	];
 
 	function visible(selector) {
 		const element = document.querySelector(selector);
@@ -30,6 +52,87 @@
 		}
 
 		return false;
+	}
+
+	function activeOverlay() {
+		if (!narrow.matches) {
+			return null;
+		}
+
+		for (const selector of overlaySelectors) {
+			for (const element of document.querySelectorAll(selector)) {
+				if (!(element instanceof HTMLElement)) {
+					continue;
+				}
+
+				const style = getComputedStyle(element);
+				const rect = element.getBoundingClientRect();
+				if (
+					style.display !== "none" &&
+					style.visibility !== "hidden" &&
+					rect.width > 0 &&
+					rect.height > 0
+				) {
+					return element;
+				}
+			}
+		}
+
+		return null;
+	}
+
+	function dispatchEscape() {
+		const target =
+			document.activeElement instanceof HTMLElement
+				? document.activeElement
+				: document.body;
+		const eventInit = {
+			key: "Escape",
+			code: "Escape",
+			keyCode: 27,
+			which: 27,
+			bubbles: true,
+			cancelable: true,
+		};
+
+		target.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+		target.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+	}
+
+	function updateOverlayBackGuard() {
+		const overlay = activeOverlay();
+		if (overlay && !overlayBackGuardArmed) {
+			overlayBackGuardArmed = true;
+			history.pushState({ agentboxOverlayBackGuard: true }, "", location.href);
+			return;
+		}
+
+		if (overlay || !overlayBackGuardArmed) {
+			return;
+		}
+
+		overlayBackGuardArmed = false;
+		if (history.state?.agentboxOverlayBackGuard) {
+			overlayBackGuardDisarming = true;
+			history.back();
+		}
+	}
+
+	function handleOverlayBack() {
+		if (overlayBackGuardDisarming) {
+			overlayBackGuardDisarming = false;
+			return;
+		}
+
+		if (!overlayBackGuardArmed) {
+			return;
+		}
+
+		overlayBackGuardArmed = false;
+		if (activeOverlay()) {
+			dispatchEscape();
+			window.setTimeout(updateOverlayBackGuard, 100);
+		}
 	}
 
 	function snapshot() {
@@ -94,6 +197,7 @@
 
 	function enforce() {
 		pending = false;
+		updateOverlayBackGuard();
 
 		if (!narrow.matches) {
 			clampVisibleParts();
@@ -134,14 +238,20 @@
 	function schedule() {
 		if (!pending) {
 			pending = true;
-			window.setTimeout(enforce, 50);
+			window.requestAnimationFrame(enforce);
 		}
 	}
 
 	function scheduleAfterInteraction() {
+		for (const pass of latePasses) {
+			window.clearTimeout(pass);
+		}
+		latePasses = [];
+
 		schedule();
-		window.setTimeout(schedule, 250);
-		window.setTimeout(schedule, 750);
+		window.requestAnimationFrame(schedule);
+		latePasses.push(window.setTimeout(schedule, 120));
+		latePasses.push(window.setTimeout(schedule, 360));
 	}
 
 	new MutationObserver(schedule).observe(document.documentElement, {
@@ -151,6 +261,7 @@
 	});
 
 	document.addEventListener("click", scheduleAfterInteraction, true);
+	window.addEventListener("popstate", handleOverlayBack);
 	window.addEventListener("resize", schedule);
 	narrow.addEventListener("change", schedule);
 
