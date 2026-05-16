@@ -7,7 +7,7 @@ For every dependency you touch, proactively consider whether it COULD have chang
 
 If yes, even slightly:
 
-1. Ensure it is git cloned into `../sources` (relative to the repo root), then run `../sync.sh`.
+1. Ensure it is git cloned into `../sources` (relative to the repo root) and uses the exact version that you need for the task. To update all versions to latest, run: `../sync.sh`.
    > If `../sources` is missing, clone `https://github.com/sloikodavid/sources`.
 2. Query the cloned dependency source code through a subagent, or analyze it yourself when you need a more expensive but raw understanding.
 
