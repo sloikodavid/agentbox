@@ -31,11 +31,6 @@ description: Use when you're not sure where to look, need to find the right file
   CLA.md
   PULL_REQUEST_TEMPLATE.md
   RELEASE.md
-.husky/
-  check-staged
-  pre-applypatch
-  pre-commit
-  pre-merge-commit
 .vscode/
   extensions.json
 packages/
