@@ -94,8 +94,93 @@
 
 	.monaco-dialog-box {
 		box-sizing: border-box !important;
+		width: min(420px, calc(100vw - 32px)) !important;
 		min-width: 0 !important;
 		max-width: calc(100vw - 32px) !important;
+		max-height: calc(100dvh - 32px) !important;
+	}
+
+	.monaco-dialog-modal-block {
+		box-sizing: border-box !important;
+		left: 0 !important;
+		right: 0 !important;
+		width: 100vw !important;
+		padding: 0 16px;
+	}
+
+	.monaco-dialog-modal-block .dialog-shadow {
+		width: min(420px, 100%);
+		max-width: 100%;
+	}
+
+	.monaco-dialog-box .dialog-message-row,
+	.monaco-dialog-box .dialog-footer-row {
+		min-width: 0;
+	}
+
+	.monaco-dialog-box:not(.align-vertical)
+		> .dialog-buttons-row
+		> .dialog-buttons {
+		margin-left: 0;
+	}
+
+	.monaco-dialog-box > .dialog-buttons-row > .dialog-buttons {
+		min-width: 0;
+	}
+
+	.monaco-dialog-box > .dialog-buttons-row > .dialog-buttons > .monaco-button {
+		min-width: 0;
+		max-width: 100%;
+	}
+
+	.monaco-modal-editor-block
+		.modal-editor-action-container
+		.action-item:has(.action-label.codicon-screen-full) {
+		display: none !important;
+	}
+
+	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+		> .modal-editor-resizable {
+		box-sizing: border-box !important;
+		left: 8px !important;
+		right: 8px !important;
+		width: auto !important;
+		max-width: calc(100vw - 16px) !important;
+	}
+
+	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+		.modal-editor-header {
+		grid-template-columns: auto minmax(0, 1fr) auto auto;
+	}
+
+	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+		.modal-editor-title,
+	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+		.modal-editor-action-container {
+		min-width: 0;
+	}
+
+	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+		.modal-editor-action-container,
+	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+		.modal-editor-action-container
+		> .monaco-toolbar,
+	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+		.modal-editor-action-container
+		> .monaco-toolbar
+		> .monaco-action-bar {
+		width: auto;
+		justify-content: flex-end;
+	}
+
+	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+		.modal-editor-action-container
+		.monaco-action-bar
+		> .actions-container {
+		width: auto;
+		margin-left: 0;
+		margin-right: 0;
+		justify-content: flex-end;
 	}
 
 	@media (hover: none), (any-pointer: coarse) {
@@ -139,7 +224,14 @@
 			touch-action: pan-y;
 		}
 
-		.monaco-scrollable-element > .scrollbar.horizontal {
+		.settings-editor
+			.monaco-split-view2.horizontal
+			> .monaco-scrollable-element
+			> .scrollbar.horizontal,
+		.profiles-editor
+			> .monaco-split-view2.horizontal
+			> .monaco-scrollable-element
+			> .scrollbar.horizontal {
 			opacity: 1 !important;
 			pointer-events: auto !important;
 			transition: none !important;

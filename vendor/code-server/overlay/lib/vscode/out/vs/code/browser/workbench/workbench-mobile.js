@@ -8,6 +8,9 @@
 	let overlayBackGuardDisarming = false;
 	let horizontalPan = null;
 	let horizontalScrollbarDrag = null;
+	const modalEditorMobileAttribute = "data-agentbox-mobile-maximized";
+	const modalEditorMaximizePendingAttribute =
+		"data-agentbox-mobile-maximize-pending";
 
 	const overlaySelectors = [
 		".monaco-menu-container",
@@ -35,6 +38,8 @@
 		".profiles-editor > .monaco-split-view2.horizontal > .monaco-scrollable-element > .split-view-container",
 		keybindingsScrollSelector,
 	];
+	const modalEditorMaximizeSelector =
+		".monaco-modal-editor-block .modal-editor-action-container .action-label.codicon-screen-full";
 
 	function browserPinchWheel(event) {
 		return (
@@ -455,6 +460,49 @@
 		}
 	}
 
+	function updateModalEditorMobileState() {
+		for (const action of document.querySelectorAll(modalEditorMaximizeSelector)) {
+			if (!(action instanceof HTMLElement)) {
+				continue;
+			}
+
+			const modal = action.closest(".monaco-modal-editor-block");
+			if (!(modal instanceof HTMLElement)) {
+				continue;
+			}
+
+			if (!narrow.matches) {
+				modal.removeAttribute(modalEditorMobileAttribute);
+				modal.removeAttribute(modalEditorMaximizePendingAttribute);
+				continue;
+			}
+
+			const maximized = action.getAttribute("aria-pressed") === "true";
+			if (maximized) {
+				modal.setAttribute(modalEditorMobileAttribute, "true");
+				modal.removeAttribute(modalEditorMaximizePendingAttribute);
+				continue;
+			}
+
+			if (modal.getAttribute(modalEditorMaximizePendingAttribute) !== "true") {
+				modal.setAttribute(modalEditorMaximizePendingAttribute, "true");
+				modal.setAttribute(modalEditorMobileAttribute, "true");
+				action.click();
+			}
+		}
+	}
+
+	function blockMobileModalEditorRestore(event) {
+		if (!narrow.matches || !(event.target instanceof Element)) {
+			return;
+		}
+
+		if (event.target.closest(".monaco-modal-editor-block .modal-editor-header")) {
+			event.preventDefault();
+			event.stopPropagation();
+		}
+	}
+
 	function snapshot() {
 		return {
 			auxiliaryBar: visible(".part.auxiliarybar"),
@@ -494,6 +542,7 @@
 		pending = false;
 		updateOverlayBackGuard();
 		updateKeybindingsScrollbars();
+		updateModalEditorMobileState();
 
 		if (!narrow.matches) {
 			clampVisibleParts();
@@ -550,6 +599,11 @@
 		latePasses.push(window.setTimeout(schedule, 360));
 	}
 
+	function handleNarrowChange() {
+		updateModalEditorMobileState();
+		schedule();
+	}
+
 	new MutationObserver(schedule).observe(document.documentElement, {
 		attributes: true,
 		childList: true,
@@ -557,6 +611,7 @@
 	});
 
 	document.addEventListener("click", scheduleAfterInteraction, true);
+	document.addEventListener("dblclick", blockMobileModalEditorRestore, true);
 	document.addEventListener("scroll", handleKeybindingsScroll, true);
 	document.addEventListener("pointerdown", startHorizontalScrollbarDrag, true);
 	document.addEventListener("pointerdown", startHorizontalPan, true);
@@ -581,7 +636,7 @@
 	});
 	window.addEventListener("popstate", handleOverlayBack);
 	window.addEventListener("resize", schedule);
-	narrow.addEventListener("change", schedule);
+	narrow.addEventListener("change", handleNarrowChange);
 	touchLike.addEventListener("change", schedule);
 
 	window.setTimeout(schedule, 500);
