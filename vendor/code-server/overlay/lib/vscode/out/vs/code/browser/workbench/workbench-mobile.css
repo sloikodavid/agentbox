@@ -1,3 +1,69 @@
+.keybindings-editor > .keybindings-body {
+	position: relative;
+}
+
+.keybindings-editor > .keybindings-body > .keybindings-table-container {
+	overflow-x: auto;
+	overflow-y: hidden;
+	overscroll-behavior-x: contain;
+	scrollbar-width: none;
+}
+
+.keybindings-editor
+	> .keybindings-body
+	> .keybindings-table-container::-webkit-scrollbar {
+	display: none;
+}
+
+.keybindings-editor > .keybindings-body > .keybindings-table-container > .monaco-table {
+	min-width: 920px;
+}
+
+.keybindings-editor
+	> .keybindings-body
+	> .agentbox-keybindings-scrollbar {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	height: 10px;
+	background: var(--vscode-scrollbar-background);
+	z-index: 20;
+}
+
+.keybindings-editor
+	> .keybindings-body
+	> .agentbox-keybindings-scrollbar.hidden {
+	display: none;
+}
+
+.keybindings-editor
+	> .keybindings-body
+	> .agentbox-keybindings-scrollbar
+	> .slider {
+	position: absolute;
+	top: 0;
+	left: 0;
+	height: 10px;
+	min-width: 20px;
+	background: var(--vscode-scrollbarSlider-background);
+	contain: strict;
+}
+
+.keybindings-editor
+	> .keybindings-body
+	> .agentbox-keybindings-scrollbar
+	> .slider:hover {
+	background: var(--vscode-scrollbarSlider-hoverBackground);
+}
+
+.keybindings-editor
+	> .keybindings-body
+	> .agentbox-keybindings-scrollbar
+	> .slider.active {
+	background: var(--vscode-scrollbarSlider-activeBackground);
+}
+
 @media (max-width: 600px) {
 	html,
 	body {
@@ -13,10 +79,9 @@
 		overflow: hidden;
 	}
 
-	.monaco-workbench .monaco-grid-view,
-	.monaco-workbench .monaco-split-view2,
-	.monaco-workbench .monaco-scrollable-element {
-		max-width: 100%;
+	.monaco-workbench.web {
+		overscroll-behavior: contain;
+		touch-action: pan-x pan-y;
 	}
 
 	.quick-input-widget {
@@ -33,44 +98,122 @@
 		max-width: calc(100vw - 32px) !important;
 	}
 
-	.settings-editor
-		> .settings-header
-		> .settings-header-controls
-		.settings-target-container,
-	.settings-editor
-		> .settings-header
-		> .settings-header-controls
-		.settings-tabs-widget,
-	.settings-editor
-		> .settings-header
-		> .settings-header-controls
-		.settings-tabs-widget
-		> .monaco-action-bar {
-		min-width: 0;
-		max-width: 100%;
-	}
+	@media (hover: none), (any-pointer: coarse) {
+		.monaco-list.mouse-support .monaco-list-row,
+		.workbench-suggest-widget .monaco-list .monaco-list-row {
+			touch-action: pan-x pan-y;
+		}
 
-	.settings-editor
-		> .settings-header
-		> .settings-header-controls
-		.settings-tabs-widget
-		> .monaco-action-bar
-		> .actions-container {
-		display: flex;
-		max-width: 100%;
-		overflow-x: auto;
-		overflow-y: hidden;
-		overscroll-behavior-x: contain;
-		-webkit-overflow-scrolling: touch;
-	}
+		.context-view.monaco-menu-container,
+		.monaco-select-box-dropdown-container.visible,
+		.monaco-hover:not(.hidden),
+		.editor-widget,
+		.suggest-widget,
+		.workbench-suggest-widget,
+		.parameter-hints-widget,
+		.rename-box,
+		.find-widget {
+			box-sizing: border-box !important;
+			max-width: calc(100vw - 16px) !important;
+			max-height: calc(100dvh - 16px) !important;
+		}
 
-	.settings-editor
-		> .settings-header
-		> .settings-header-controls
-		.settings-tabs-widget
-		> .monaco-action-bar
-		> .actions-container
-		> .action-item {
-		flex: 0 0 auto;
+		.monaco-select-box-dropdown-container.visible
+			> .select-box-dropdown-list-container {
+			min-height: 0;
+			max-height: inherit;
+		}
+
+		.settings-editor
+			.monaco-split-view2.horizontal
+			> .monaco-scrollable-element
+			> .split-view-container,
+		.profiles-editor
+			> .monaco-split-view2.horizontal
+			> .monaco-scrollable-element
+			> .split-view-container {
+			touch-action: pan-y;
+		}
+
+		.keybindings-editor > .keybindings-body > .keybindings-table-container {
+			touch-action: pan-y;
+		}
+
+		.monaco-scrollable-element > .scrollbar.horizontal {
+			opacity: 1 !important;
+			pointer-events: auto !important;
+			transition: none !important;
+		}
+
+		.settings-editor
+			> .settings-header
+			> .settings-header-controls
+			.settings-target-container,
+		.settings-editor
+			> .settings-header
+			> .settings-header-controls
+			.settings-tabs-widget,
+		.settings-editor
+			> .settings-header
+			> .settings-header-controls
+			.settings-tabs-widget
+			> .monaco-action-bar {
+			min-width: 0;
+			max-width: 100%;
+		}
+
+		.settings-editor
+			> .settings-header
+			> .settings-header-controls
+			.settings-tabs-widget
+			> .monaco-action-bar
+			> .actions-container {
+			overflow: hidden;
+		}
+
+		.settings-editor
+			> .settings-header
+			> .settings-header-controls
+			.settings-tabs-widget
+			> .monaco-action-bar
+			> .actions-container
+			> .action-item {
+			min-width: 0;
+			flex: 0 1 auto;
+		}
+
+		.settings-editor
+			> .settings-header
+			> .settings-header-controls
+			.settings-tabs-widget
+			> .monaco-action-bar
+			> .actions-container
+			> .action-item
+			.action-label {
+			display: block;
+			max-width: 32vw;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+
+		.settings-editor
+			> .settings-header
+			> .settings-header-controls
+			.settings-tabs-widget
+			> .monaco-action-bar
+			.action-label.folder-settings
+			.action-title,
+		.settings-editor
+			> .settings-header
+			> .settings-header-controls
+			.settings-tabs-widget
+			> .monaco-action-bar
+			.action-label.folder-settings
+			.action-details {
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
 	}
 }
