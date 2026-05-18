@@ -9,7 +9,7 @@
 
 - Add theme, and welcome with popular agent 1 click installations.
 
-- Patch branding - logo/name/login.html?
+- Patch branding - name as well as letterpress, files under `/src/browser` in code-server source?
 
 - The OSS image can be safe and simple, but cloud can do more:
   - run the same Agentbox image with managed infrastructure around it.
