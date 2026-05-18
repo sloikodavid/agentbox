@@ -21,8 +21,7 @@ func Ready() Heartbeat {
 	return Heartbeat{Ready: true, UpdatedAt: time.Now().UTC()}
 }
 
-// Write atomically replaces the heartbeat file at path with hb. The parent
-// directory must already exist.
+// Write atomically replaces the heartbeat file at path.
 func Write(path string, hb Heartbeat) error {
 	if hb.UpdatedAt.IsZero() {
 		hb.UpdatedAt = time.Now().UTC()
@@ -33,6 +32,9 @@ func Write(path string, hb Heartbeat) error {
 	}
 	data = append(data, '\n')
 	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("heartbeat: create dir: %w", err)
+	}
 	tmp, err := os.CreateTemp(dir, ".heartbeat-*")
 	if err != nil {
 		return fmt.Errorf("heartbeat: create temp: %w", err)

@@ -1,0 +1,49 @@
+diff --git a/out/node/main.js b/out/node/main.js
+index b9ec17b..8ea0eb8 100644
+--- a/out/node/main.js
++++ b/out/node/main.js
+@@ -143,6 +143,10 @@ const runCodeServer = (args) => __awaiter(void 0, void 0, void 0, function* () {
+     const { disposeRoutes, heart } = yield (0, routes_1.register)(app, args);
+     logger_1.logger.info(`Using config file ${args.config}`);
+     logger_1.logger.info(`${protocol.toUpperCase()} server listening on ${serverAddress.toString()}`);
++    const agentboxAddress = typeof serverAddress === "string" ? undefined : (0, util_2.toBrowserAddress)(serverAddress);
++    if (agentboxAddress) {
++        logger_1.logger.info(`Agentbox is ready at ${agentboxAddress.toString()}`);
++    }
+     if (args.auth === cli_1.AuthType.Password) {
+         logger_1.logger.info("  - Authentication is enabled");
+         if (args.usingEnvPassword) {
+diff --git a/out/node/util.js b/out/node/util.js
+index 94ede24..c9e42dd 100644
+--- a/out/node/util.js
++++ b/out/node/util.js
+@@ -47,5 +47,5 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
+ Object.defineProperty(exports, "__esModule", { value: true });
+-exports.escapeJSON = exports.isDirectory = exports.isFile = exports.open = exports.isWsl = exports.getMediaMime = exports.isHashLegacyMatch = exports.hashLegacy = exports.isHashMatch = exports.hash = exports.generatePassword = exports.generateCertificate = exports.paths = exports.onLine = void 0;
++exports.escapeJSON = exports.isDirectory = exports.isFile = exports.open = exports.toBrowserAddress = exports.isWsl = exports.getMediaMime = exports.isHashLegacyMatch = exports.hashLegacy = exports.isHashMatch = exports.hash = exports.generatePassword = exports.generateCertificate = exports.paths = exports.onLine = void 0;
+ exports.getEnvPaths = getEnvPaths;
+ exports.getPasswordMethod = getPasswordMethod;
+ exports.handlePasswordValidation = handlePasswordValidation;
+@@ -406,16 +406,21 @@ function constructOpenOptions(platform, urlSearch) {
+ /**
+  * Try opening an address using whatever the system has set for opening URLs.
+  */
+-const open = (address) => __awaiter(void 0, void 0, void 0, function* () {
++const toBrowserAddress = (address) => {
+     if (typeof address === "string") {
+         throw new Error("Cannot open socket paths");
+     }
+     // Web sockets do not seem to work if browsing with 0.0.0.0.
+     const url = new URL(address);
+     if (url.hostname === "0.0.0.0") {
+         url.hostname = "localhost";
+     }
++    return url;
++};
++exports.toBrowserAddress = toBrowserAddress;
++const open = (address) => __awaiter(void 0, void 0, void 0, function* () {
++    const url = (0, exports.toBrowserAddress)(address);
+     const platform = (yield (0, exports.isWsl)(process.platform, os.release(), "/proc/version")) ? "wsl" : process.platform;
+     const { command, args, urlSearch } = constructOpenOptions(platform, url.search);
+     url.search = urlSearch;
+     const proc = cp.spawn(command, [...args, url.toString()], {});

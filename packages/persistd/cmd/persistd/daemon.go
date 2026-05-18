@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -71,6 +72,10 @@ func runDaemon(ctx context.Context, paths config.Paths) int {
 	}
 	dirty := scheduler.NewDirtySource(queue, 10, func(ctx context.Context, path string) error {
 		if err := proc.Apply(ctx, path); err != nil {
+			if errors.Is(err, objectstore.ErrChangedDuringCopy) {
+				queue.EnqueueRequired(path)
+				return nil
+			}
 			fmt.Fprintf(os.Stderr, "persistd watch: apply %s: %v\n", path, err)
 		}
 		return nil
@@ -101,6 +106,7 @@ func runDaemon(ctx context.Context, paths config.Paths) int {
 	hbTicker := time.NewTicker(5 * time.Second)
 	defer hbTicker.Stop()
 	writeWatchHeartbeat(paths, watcher, queue, auditor, gcCol, sqldb)
+	fmt.Printf("persistd watch: ready; monitoring %d root(s), heartbeat=%s\n", len(roots), paths.Heartbeat)
 	for {
 		select {
 		case <-ctx.Done():

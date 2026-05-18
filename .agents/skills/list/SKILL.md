@@ -136,7 +136,6 @@ rootfs/
     agentbox/
       code-server.sh
       entrypoint.sh
-      runtime.ts
   usr/
     share/
       applications/
@@ -167,6 +166,8 @@ vendor/
     patches/
       0001-gate-code-server-on-persistd-readiness.patch
       0002-load-workbench-mobile.patch
+      0003-log-agentbox-access-url.patch
+      0004-default-bind-address.patch
     README.md
 .dockerignore
 .editorconfig
@@ -179,6 +180,7 @@ Dockerfile
 eslint.config.mjs
 LICENSE
 package.json
+PLAN.md
 pnpm-lock.yaml
 renovate.json
 SECURITY.md

@@ -1,15 +1,15 @@
 # To-do
 
-- Rewrite persistd in Rust from first principles.
+- Improve auth flow from start to finish, including login.html.
 
-- Make logs cleaner with readiness URL?
+- Rewrite persistd in Rust from first principles.
 
 - Figure out the API including Shortcuts.
   - Copy URL button for shortcuts - uses a Webhook for command shortcuts and passes payload.
 
 - Add theme, and welcome with popular agent 1 click installations.
 
-- Patch branding - logo/name?
+- Patch branding - logo/name/login.html?
 
 - The OSS image can be safe and simple, but cloud can do more:
   - run the same Agentbox image with managed infrastructure around it.

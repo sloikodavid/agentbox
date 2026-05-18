@@ -82,7 +82,7 @@ func runRestore() int {
 		writeRestoreFailure(paths, err)
 		return 0
 	}
-	fmt.Println("persistd restore: ok")
+	fmt.Println("persistd restore: success")
 	return 0
 }
 

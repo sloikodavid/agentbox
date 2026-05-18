@@ -6,12 +6,8 @@ services:
         AGENTBOX_BUILD_REVISION: ${AGENTBOX_BUILD_REVISION:-unknown}
         AGENTBOX_BUILD_SOURCE: ${AGENTBOX_BUILD_SOURCE:-https://github.com/sloikodavid/agentbox}
         AGENTBOX_BUILD_VERSION: ${AGENTBOX_BUILD_VERSION:-unknown}
-    environment:
-      - PORT=${PORT:-8080}
-      - PASSWORD=12345
-      - TZ
     ports:
-      - "${PORT:-8080}:${PORT:-8080}"
+      - "${PORT:-8080}:8080"
     volumes:
       - mydata:/data
 

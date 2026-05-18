@@ -37,6 +37,16 @@ func TestWrite_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestWrite_CreatesParentDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run", "persistd", "ready")
+	if err := Write(path, Ready()); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("stat ready file: %v", err)
+	}
+}
+
 func TestReady_IsReady(t *testing.T) {
 	hb := Ready()
 	if !hb.Ready {
