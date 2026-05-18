@@ -212,6 +212,21 @@ mod imp {
                 .optional()
                 .context("lookup baseline record")
         }
+
+        pub fn all_paths(&self) -> Result<Vec<String>> {
+            let mut statement = self
+                .conn
+                .prepare("SELECT path FROM records ORDER BY path")
+                .context("prepare baseline path scan")?;
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .context("scan baseline paths")?;
+            let mut paths = Vec::new();
+            for row in rows {
+                paths.push(row?);
+            }
+            Ok(paths)
+        }
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]

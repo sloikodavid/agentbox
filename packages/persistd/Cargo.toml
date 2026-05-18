@@ -11,6 +11,7 @@ blake3 = "1.8.5"
 clap = { version = "4.6.1", features = ["derive"] }
 filetime = "0.2.29"
 fs2 = "0.4.3"
+inotify = "0.11.1"
 libc = "0.2.186"
 rusqlite = { version = "0.39.0", features = ["bundled"] }
 serde = { version = "1.0.228", features = ["derive"] }

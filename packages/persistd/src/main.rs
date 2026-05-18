@@ -11,6 +11,10 @@ mod update;
 
 #[cfg(unix)]
 mod apply;
+#[cfg(unix)]
+mod audit;
+#[cfg(unix)]
+mod watch;
 
 use anyhow::Result;
 use clap::Parser;

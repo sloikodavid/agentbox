@@ -95,6 +95,7 @@ packages/
         watcher_other.go
     src/
       apply.rs
+      audit.rs
       baseline.rs
       cli.rs
       config.rs
@@ -106,6 +107,7 @@ packages/
       paths.rs
       readiness.rs
       update.rs
+      watch.rs
     Cargo.lock
     Cargo.toml
     go.mod
