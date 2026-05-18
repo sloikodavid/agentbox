@@ -44,34 +44,36 @@ Do not let old Go internals pollute the new design.
 
 Strict decisions:
 
-- public layout
-- `/opt/persistd/baseline.sqlite`
-- `/run/persistd/ready`
-- `/data/persistd/config.json`
-- `/data/persistd/changed`
-- `/data/persistd/removed`
-- `/data/persistd/metadata.jsonl`
-- `/data/persistd/.internal/state.sqlite`
-- `/data/persistd/.internal/lock`
-- `/data/persistd/.internal/control.sock`
-- command set: `run`, `status`, `doctor`, `prune`
-- single writer: only `persistd run`
-- other commands talk to the daemon and fail if it is not running
-- baseline comparison before writing to `changed`
-- watcher plus rolling audit
-- public truth wins over `.internal/state.sqlite`
-- `metadata.jsonl` is fallback-only current state, not a journal
-- Rust-native restore, no `rsync`
+- public layout.
+- `/opt/persistd/baseline.sqlite`.
+- `/run/persistd/ready`.
+- `/data/persistd/config.json`.
+- `/data/persistd/changed`.
+- `/data/persistd/removed`.
+- `/data/persistd/metadata.jsonl`.
+- `/data/persistd/.internal/state.sqlite`.
+- `/data/persistd/.internal/lock`.
+- `/data/persistd/.internal/control.sock`.
+- command set: `apply`, `daemon`, `status`, `doctor`, `prune`.
+- boot apply and live daemon are separate operational phases.
+- only `persistd apply` and `persistd daemon` mutate filesystem or persistence state.
+- `persistd apply` is one-shot and must finish before the daemon starts.
+- `status`, `doctor`, and `prune` talk to the daemon and fail if it is not running.
+- baseline comparison before writing to `changed`.
+- watcher plus rolling audit.
+- public truth wins over `.internal/state.sqlite`.
+- `metadata.jsonl` is fallback-only current state, not a journal.
+- Rust-native apply, no `rsync`.
 
 Advisory decisions:
 
-- exact Rust module/file structure
-- exact dependency set
-- exact SQLite schema
-- exact `metadata.jsonl` schema
-- exact control socket protocol
-- exact scheduling implementation
-- exact ACL/capability crate choice
+- exact Rust module/file structure.
+- exact dependency set.
+- exact SQLite schema.
+- exact `metadata.jsonl` schema.
+- exact control socket protocol.
+- exact scheduling implementation.
+- exact ACL/capability crate choice.
 
 When an advisory decision becomes load-bearing, stop and invoke the grill skill.
 
@@ -174,23 +176,23 @@ Target environments include:
 
 The implementation should preserve all realistic Linux filesystem state:
 
-- regular files
-- directories
-- symlinks
-- hardlinks when supported
-- mode bits
-- uid and gid
-- mtimes
-- xattrs
-- ACLs
-- Linux file capabilities where possible
-- FIFOs
-- device node records, with restore only when permitted
-- sparse file correctness, and sparseness where possible
+- regular files.
+- directories.
+- symlinks.
+- hardlinks when supported.
+- mode bits.
+- uid and gid.
+- mtimes.
+- xattrs.
+- ACLs.
+- Linux file capabilities where possible.
+- FIFOs.
+- device node records, with apply only when permitted.
+- sparse file correctness, and sparseness where possible.
 
 If a feature cannot be stored natively on the volume, persist fallback metadata in `metadata.jsonl`.
 
-If a feature cannot be restored due to missing runtime permission, fail clearly or record a diagnostic.
+If a feature cannot be applied due to missing runtime permission, fail clearly or record a diagnostic.
 
 Do not silently discard user data.
 
@@ -224,7 +226,7 @@ Persistent user delta and daemon internals:
     state.sqlite
     lock
     control.sock
-    restore-error.log
+    apply-error.log
     watch-error.log
 ```
 
@@ -276,19 +278,21 @@ The preferred name is `state.sqlite`.
 
 Internal SQLite may store:
 
-- event journal
-- dirty path queue
-- audit cursors
-- debounce batches
-- cached indexes of `changed/`, `removed/`, and `metadata.jsonl`
-- capability probe results
-- restore run status
-- watch run status
-- prune status
-- doctor status
-- diagnostics
-- checkpoint state
-- crash recovery state
+- event journal.
+- dirty path queue.
+- audit cursors.
+- debounce batches.
+- cached indexes of `changed/`, `removed/`, and `metadata.jsonl`.
+- capability probe results.
+- last apply status.
+- last daemon status.
+- watcher status.
+- audit status.
+- prune status.
+- doctor status.
+- diagnostics.
+- checkpoint state.
+- crash recovery state.
 
 Internal SQLite must not be required to understand or manually repair user data.
 
@@ -297,7 +301,8 @@ Internal SQLite must not be required to understand or manually repair user data.
 The command surface is settled:
 
 ```bash
-persistd run
+persistd apply
+persistd daemon
 persistd status
 persistd doctor
 persistd prune
@@ -307,6 +312,8 @@ Avoid hidden flag mazes.
 
 Only add `--json` where genuinely useful for automation.
 
+Do not keep public `run`.
+
 Do not keep public `restore`.
 
 Do not keep public `watch`.
@@ -315,40 +322,72 @@ Do not keep public `check`.
 
 ## 8. Command Semantics
 
-### `persistd run`
+### `persistd apply`
 
-This is the only writer.
+This is the one-shot boot apply phase.
 
-It is long-running.
+It is run by the container entrypoint before Supervisor starts.
 
-It owns the persistence lifecycle.
+It applies persisted public truth to the live root filesystem.
 
 It does:
 
-1. remove stale readiness
-2. create layout
-3. acquire lock
-4. open or recover `.internal/state.sqlite`
-5. load config
-6. load `/opt/persistd/baseline.sqlite`
-7. probe volume capabilities
-8. reconcile public truth
-9. compact `metadata.jsonl`
-10. rebuild internal indexes
-11. apply `removed/`
-12. apply `changed/`
-13. apply fallback metadata
-14. initialize watcher
-15. initialize rolling audit
-16. create control socket
-17. write `/run/persistd/ready`
-18. continue processing events and audit work
+1. remove stale readiness.
+2. create layout.
+3. acquire lock.
+4. open or recover `.internal/state.sqlite`.
+5. load config.
+6. load `/opt/persistd/baseline.sqlite`.
+7. probe volume capabilities.
+8. validate and normalize public truth.
+9. compact `metadata.jsonl`.
+10. rebuild internal indexes.
+11. apply `removed/`.
+12. apply `changed/`.
+13. apply fallback metadata.
+14. record apply success in `.internal/state.sqlite`.
+15. exit zero.
 
-If restore fails, `run` stays alive in failed/not-ready mode.
+If apply fails, it must exit non-zero.
 
-If restore fails, it must not write `/run/persistd/ready`.
+If apply fails, it must not write `/run/persistd/ready`.
 
-If restore fails, code-server should stay gated and show failure information.
+If apply fails, Supervisor should not start.
+
+Record apply failure details in `.internal/state.sqlite` and `/data/persistd/.internal/apply-error.log` where possible.
+
+Do not make apply failure coordination depend on marker files such as the old `/run/persistd/restore-failed`.
+
+### `persistd daemon`
+
+This is the long-running live persistence daemon.
+
+It is run by Supervisor and may be autorestarted.
+
+It must not replay boot apply on daemon restart.
+
+It does:
+
+1. remove stale readiness.
+2. create layout if needed.
+3. acquire lock.
+4. open or recover `.internal/state.sqlite`.
+5. load config.
+6. load `/opt/persistd/baseline.sqlite`.
+7. probe volume capabilities.
+8. initialize watcher.
+9. initialize rolling audit.
+10. create control socket.
+11. write `/run/persistd/ready`.
+12. continue processing watcher and audit candidates through `update`.
+
+The normal guarantee that apply already succeeded comes from entrypoint ordering: Supervisor starts only after `persistd apply` exits zero.
+
+`persistd daemon` may report the last apply status from `.internal/state.sqlite`, but it must not invent a second runtime apply-success marker.
+
+If watcher or audit initialization fails fatally, `daemon` must not write `/run/persistd/ready`.
+
+If watcher or audit degrades but rolling audit can still protect correctness, record diagnostics and continue only if that degraded mode is explicitly accepted by the implementation.
 
 ### `persistd status`
 
@@ -364,15 +403,15 @@ It should not deeply walk public truth.
 
 It should report:
 
-- ready or not ready
-- current lifecycle phase
-- last restore status
-- last watch status
-- last error summary
-- capability probe summary
-- dirty queue size
-- audit progress summary
-- public path counts from cached state
+- ready or not ready.
+- current lifecycle phase.
+- last apply status.
+- last watch status.
+- last error summary.
+- capability probe summary.
+- dirty queue size.
+- audit progress summary.
+- public path counts from cached state.
 
 ### `persistd doctor`
 
@@ -386,12 +425,12 @@ It may perform safe normalization only.
 
 Examples of safe normalization:
 
-- compact `metadata.jsonl`
-- rebuild `.internal/state.sqlite` indexes
-- clean abandoned internal work
-- validate baseline availability
-- validate path mapping
-- validate `changed/`, `removed/`, and `metadata.jsonl` consistency
+- compact `metadata.jsonl`.
+- rebuild `.internal/state.sqlite` indexes.
+- clean abandoned internal work.
+- validate baseline availability.
+- validate path mapping.
+- validate `changed/`, `removed/`, and `metadata.jsonl` consistency.
 
 It must not destructively remove user data.
 
@@ -411,19 +450,25 @@ It should remove only things that are safe under current config and baseline rul
 
 Prune can remove:
 
-- dormant persisted data under current exclusions
-- baseline-equal `changed/` entries
-- stale tombstones
-- stale metadata
-- empty directories left by pruning
+- dormant persisted data under current exclusions.
+- baseline-equal `changed/` entries.
+- stale tombstones.
+- stale metadata.
+- empty directories left by pruning.
 
 ## 9. Single Writer Rule
 
-Only `persistd run` mutates persistence state.
+Only `persistd apply` and `persistd daemon` mutate filesystem or persistence state.
+
+They must never run concurrently.
+
+`persistd apply` runs before Supervisor starts and exits.
+
+`persistd daemon` is the only long-running writer.
 
 `status`, `doctor`, and `prune` do not directly mutate the filesystem.
 
-They talk to `persistd run`.
+They talk to `persistd daemon`.
 
 There is no fallback path where commands take the lock and mutate directly.
 
@@ -433,19 +478,21 @@ This avoids split-brain behavior.
 
 ## 10. Locking
 
-`persistd run` holds:
+`persistd apply` and `persistd daemon` use:
 
 ```text
 /data/persistd/.internal/lock
 ```
 
-The lock is held for the whole daemon lifetime.
+`persistd apply` holds the lock for the duration of apply.
 
-The lock prevents two `persistd run` processes from writing at once.
+`persistd daemon` holds the lock for the whole daemon lifetime.
+
+The lock prevents apply and daemon from writing at once.
 
 Use an advisory lock appropriate for Linux.
 
-If the lock cannot be acquired, `run` exits or reports already-running clearly.
+If the lock cannot be acquired, the command exits or reports already-running clearly.
 
 ## 11. Control Socket
 
@@ -475,7 +522,7 @@ Readiness marker:
 /run/persistd/ready
 ```
 
-This is the only runtime marker.
+This is the only runtime readiness marker.
 
 Do not create:
 
@@ -488,19 +535,21 @@ Failure details live in:
 
 ```text
 /data/persistd/.internal/state.sqlite
-/data/persistd/.internal/restore-error.log
+/data/persistd/.internal/apply-error.log
 /data/persistd/.internal/watch-error.log
 ```
 
 Write `/run/persistd/ready` only after:
 
-- public truth was reconciled
-- restore completed
-- watcher initialized
-- rolling audit initialized
-- daemon is actively protecting the filesystem
+- public truth was updated.
+- apply completed.
+- watcher initialized.
+- rolling audit initialized.
+- daemon is actively protecting the filesystem.
 
 Remove stale ready at daemon start.
+
+Remove stale ready at apply start.
 
 ## 13. Config
 
@@ -528,10 +577,10 @@ If config is absent, create a default config.
 
 Config includes:
 
-- exclusions
-- scheduler/audit budgets
-- maybe logging verbosity
-- maybe feature policy for fallback metadata
+- exclusions.
+- scheduler/audit budgets.
+- maybe logging verbosity.
+- maybe feature policy for fallback metadata.
 
 Keep config small.
 
@@ -545,12 +594,12 @@ Excluded paths are outside the persistence universe at runtime.
 
 For excluded paths:
 
-- do not restore from `changed/`
-- do not apply `removed/`
-- do not apply `metadata.jsonl`
-- do not watch
-- do not audit
-- do not compare to baseline
+- do not apply from `changed/`.
+- do not apply `removed/`.
+- do not apply `metadata.jsonl`.
+- do not watch.
+- do not audit.
+- do not compare to baseline.
 
 Existing persisted data under excluded paths is ignored, not pruned.
 
@@ -558,16 +607,16 @@ Prune may later remove dormant excluded data intentionally.
 
 Default exclusions in the config file must include at least:
 
-- `/data`
-- `/run`
-- `/proc`
-- `/sys`
-- `/dev`
-- `/tmp`
-- `/var/run`
-- `/opt/persistd`
-- `/opt/agentbox`
-- runtime files such as `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf`
+- `/data`.
+- `/run`.
+- `/proc`.
+- `/sys`.
+- `/dev`.
+- `/tmp`.
+- `/var/run`.
+- `/opt/persistd`.
+- `/opt/agentbox`.
+- runtime files such as `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf`.
 
 Review current Go defaults before deciding final default exclusions.
 
@@ -595,16 +644,16 @@ It should contain all real image paths.
 
 It should skip technical runtime/self-reference paths:
 
-- `/proc`
-- `/sys`
-- `/dev`
-- `/run`
-- `/data`
-- `/opt/persistd/baseline.sqlite`
+- `/proc`.
+- `/sys`.
+- `/dev`.
+- `/run`.
+- `/data`.
+- `/opt/persistd/baseline.sqlite`.
 
 Baseline must include content hashes for all included regular files.
 
-Baseline must be available before `persistd run` can protect the system.
+Baseline must be available before `persistd apply` can apply public truth and before `persistd daemon` can protect the live system.
 
 If baseline is missing or corrupt, fail not-ready.
 
@@ -614,20 +663,20 @@ Baseline records should include enough data to decide whether a live path equals
 
 Minimum fields:
 
-- path bytes
-- normalized display path
-- kind
-- mode
-- uid
-- gid
-- size
-- mtime_ns
-- content hash for regular files
-- symlink target for symlinks
-- device major/minor for device nodes if present
-- xattr facts if image xattrs matter
-- ACL facts if image ACLs matter
-- capability facts if image capabilities matter
+- path bytes.
+- normalized display path.
+- kind.
+- mode.
+- uid.
+- gid.
+- size.
+- mtime_ns.
+- content hash for regular files.
+- symlink target for symlinks.
+- device major/minor for device nodes if present.
+- xattr facts if image xattrs matter.
+- ACL facts if image ACLs matter.
+- capability facts if image capabilities matter.
 
 Do not finalize exact baseline schema without reviewing filesystem fidelity needs.
 
@@ -645,19 +694,19 @@ Always compare before writing to `changed/`.
 
 This prevents touched-but-unchanged large files from ballooning the volume.
 
-## 18. Compare-First Pipeline
+## 18. Compare-First Update Pipeline
 
 Every watcher event and every audit discovery feeds the same pipeline:
 
-1. normalize path
-2. reject or ignore excluded path
-3. inspect live path with `lstat`
-4. find baseline record
-5. compare cheap facts first
-6. hash only when needed
-7. decide public truth mutation
-8. write atomically if a mutation is needed
-9. update internal state
+1. normalize path.
+2. reject or ignore excluded path.
+3. inspect live path with `lstat`.
+4. find baseline record.
+5. compare cheap facts first.
+6. hash only when needed.
+7. decide public truth mutation.
+8. write atomically if a mutation is needed.
+9. update internal state.
 
 No mirror-first-then-prune.
 
@@ -667,16 +716,16 @@ No separate semantics for watcher and audit.
 
 Use gates in this order:
 
-1. path exists or missing
-2. kind
-3. size for regular files
-4. mode
-5. uid/gid
-6. symlink target
-7. device major/minor
-8. mtime where meaningful
-9. xattr/ACL/capability facts where required
-10. content hash for regular files when cheap facts do not prove difference
+1. path exists or missing.
+2. kind.
+3. size for regular files.
+4. mode.
+5. uid/gid.
+6. symlink target.
+7. device major/minor.
+8. mtime where meaningful.
+9. xattr/ACL/capability facts where required.
+10. content hash for regular files when cheap facts do not prove difference.
 
 If cheap facts prove difference, persist delta without hashing only when content equality cannot change the decision.
 
@@ -688,27 +737,27 @@ The final decision must be correct in edge cases.
 
 If live path equals baseline:
 
-- remove corresponding `changed/` entry
-- remove corresponding `removed/` entry
-- drop fallback metadata for that path if no longer needed
+- remove corresponding `changed/` entry.
+- remove corresponding `removed/` entry.
+- drop fallback metadata for that path if no longer needed.
 
 If live path differs from baseline:
 
-- write or update corresponding `changed/` entry
-- clear exact `removed/` marker when appropriate
-- write fallback metadata only for unsupported fields
+- write or update corresponding `changed/` entry.
+- clear exact `removed/` marker when appropriate.
+- write fallback metadata only for unsupported fields.
 
 If live path is missing and baseline had it:
 
-- create corresponding `removed/` marker
-- remove corresponding `changed/` entry
-- drop fallback metadata unless marker needs it
+- create corresponding `removed/` marker.
+- remove corresponding `changed/` entry.
+- drop fallback metadata unless marker needs it.
 
 If live path is missing and baseline did not have it:
 
-- remove corresponding `changed/` entry
-- remove corresponding `removed/` marker
-- drop fallback metadata
+- remove corresponding `changed/` entry.
+- remove corresponding `removed/` marker.
+- drop fallback metadata.
 
 ## 21. `changed/`
 
@@ -783,26 +832,26 @@ Therefore `changed/` wins.
 
 This handles replacing an image directory with user-created content at the same path.
 
-Restore order must preserve this rule.
+Apply order must preserve this rule.
 
-## 24. Restore Order
+## 24. Apply Order
 
-Restore order is settled:
+Apply order is settled:
 
-1. reconcile public truth
-2. compact `metadata.jsonl`
-3. rebuild/update `.internal/state.sqlite`
-4. apply `removed/`
-5. apply `changed/`
-6. apply fallback metadata from `metadata.jsonl`
-7. initialize watch/audit
-8. write ready
+1. validate and normalize public truth.
+2. compact `metadata.jsonl`.
+3. rebuild/update `.internal/state.sqlite`.
+4. apply `removed/`.
+5. apply `changed/`.
+6. apply fallback metadata from `metadata.jsonl`.
+7. initialize watch/audit.
+8. write ready.
 
 Applying `removed/` before `changed/` is required.
 
-Restore must be idempotent.
+Apply must be idempotent.
 
-If the container crashes mid-restore, the next `run` starts over safely.
+If the container crashes mid-apply, the next `persistd apply` starts over safely.
 
 ## 25. `metadata.jsonl`
 
@@ -836,13 +885,13 @@ Only data that cannot be represented natively in `changed/` or `removed/`.
 
 Examples:
 
-- fallback xattrs
-- fallback ACLs
-- security capability fallback
-- hardlink group records when hardlinks cannot be stored natively
-- FIFO records when FIFOs cannot be stored in `changed/`
-- device node records
-- sparse file fallback facts if needed
+- fallback xattrs.
+- fallback ACLs.
+- security capability fallback.
+- hardlink group records when hardlinks cannot be stored natively.
+- FIFO records when FIFOs cannot be stored in `changed/`.
+- device node records.
+- sparse file fallback facts if needed.
 
 Do not duplicate normal metadata in JSONL if the volume supports it natively.
 
@@ -850,9 +899,9 @@ Do not store every path in JSONL just for indexing.
 
 Indexes belong in `.internal/state.sqlite`.
 
-## 27. Metadata Reconciliation
+## 27. Metadata Update
 
-`metadata.jsonl` is reconciled on `run` startup and by `doctor`.
+`metadata.jsonl` is compacted and normalized on `persistd apply` startup and by `doctor`.
 
 If the user deletes from `changed/` but metadata remains, drop stale metadata when appropriate.
 
@@ -874,17 +923,17 @@ Store probe results in `.internal/state.sqlite`.
 
 Probe at least:
 
-- chmod
-- chown
-- mtime preservation
-- symlink creation
-- hardlink creation
-- `user.*` xattrs
-- `security.capability` xattrs
-- ACL preservation
-- FIFO creation
-- device node creation
-- sparse file behavior if practical
+- chmod.
+- chown.
+- mtime preservation.
+- symlink creation.
+- hardlink creation.
+- `user.*` xattrs.
+- `security.capability` xattrs.
+- ACL preservation.
+- FIFO creation.
+- device node creation.
+- sparse file behavior if practical.
 
 Probe results decide whether data is stored natively or in `metadata.jsonl`.
 
@@ -902,17 +951,17 @@ Watcher is the low-latency path.
 
 Rolling audit is the correctness path.
 
-Both feed the compare-first pipeline.
+Both feed the compare-first update pipeline.
 
 The rolling audit scans the whole non-excluded live filesystem forever, budgeted.
 
 The audit must eventually catch:
 
-- missed events
-- daemon restarts
-- watcher overflow
-- changes before watcher started
-- race windows
+- missed events.
+- daemon restarts.
+- watcher overflow.
+- changes before watcher started.
+- race windows.
 
 Do not rely only on events.
 
@@ -922,10 +971,10 @@ Watcher overflow must degrade into audit recovery, not data loss.
 
 If overflow is detected:
 
-- record diagnostic
-- increase audit priority or enqueue affected roots
-- keep daemon alive if possible
-- do not mark ready false unless correctness is actively compromised
+- record diagnostic.
+- increase audit priority or enqueue affected roots.
+- keep daemon alive if possible.
+- do not mark ready false unless correctness is actively compromised.
 
 If unsure about overflow policy, invoke the grill skill.
 
@@ -943,11 +992,11 @@ SQLite transactions can track internal work.
 
 After crash:
 
-- public truth wins
-- abandoned internal work is cleaned or completed
-- metadata is compacted
-- internal indexes are rebuilt
-- restore is re-applied idempotently
+- public truth wins.
+- abandoned internal work is cleaned or completed.
+- metadata is compacted.
+- internal indexes are rebuilt.
+- apply is re-run idempotently.
 
 ## 32. Path Handling
 
@@ -975,17 +1024,17 @@ If path encoding for control files becomes necessary, invoke the grill skill bef
 
 ## 33. Symlink Safety
 
-Restore must not follow symlink ancestors when applying writes into `/`.
+Apply must not follow symlink ancestors when applying writes into `/`.
 
 Avoid writing through a symlink to escape intended paths.
 
 Use `lstat` semantics.
 
-For file restore, validate ancestors.
+For file apply, validate ancestors.
 
-For deletion restore, validate ancestors.
+For deletion apply, validate ancestors.
 
-The current Go implementation already guards against symlink ancestor restore escapes; the Rust rewrite must keep that safety property.
+The current Go implementation already guards against symlink ancestor apply escapes; the Rust rewrite must keep that safety property.
 
 ## 34. Hardlinks
 
@@ -995,9 +1044,9 @@ If the volume supports hardlinks, store hardlinked entries in `changed/` as hard
 
 If the volume does not support hardlinks, record fallback hardlink group data in `metadata.jsonl`.
 
-On restore, recreate hardlinks when possible.
+On apply, recreate hardlinks when possible.
 
-If hardlink restore fails due to cross-device or permissions, fall back only if content correctness is maintained and diagnostic is recorded.
+If hardlink apply fails due to cross-device or permissions, fall back only if content correctness is maintained and diagnostic is recorded.
 
 If hardlink semantics are unclear, invoke the grill skill.
 
@@ -1023,7 +1072,7 @@ If not possible, store FIFO fallback record in `metadata.jsonl`.
 
 Device nodes should be recorded in `metadata.jsonl`.
 
-Restore device nodes only if permitted.
+Apply device nodes only if permitted.
 
 Sockets are not persisted as live sockets.
 
@@ -1035,15 +1084,15 @@ Runtime virtual filesystem state is excluded.
 
 Baseline equality includes all relevant filesystem state:
 
-- kind
-- file content hash
-- symlink target
-- mode
-- uid/gid
-- mtime if preserved
-- hardlink identity/group when meaningful
-- xattrs/ACLs when preserved
-- device major/minor for device records
+- kind.
+- file content hash.
+- symlink target.
+- mode.
+- uid/gid.
+- mtime if preserved.
+- hardlink identity/group when meaningful.
+- xattrs/ACLs when preserved.
+- device major/minor for device records.
 
 If a path returns to baseline, prune its persisted delta.
 
@@ -1098,16 +1147,20 @@ packages/persistd/
     public.rs
     internal.rs
     rootfs.rs
-    reconcile.rs
-    restore.rs
-    watch.rs
+    apply.rs
     daemon.rs
+    watch.rs
+    audit.rs
+    update.rs
+    status.rs
+    doctor.rs
+    prune.rs
   tests/
 ```
 
 `main.rs` is the tiny Rust binary entrypoint.
 
-`cli.rs` parses `persistd run`, `persistd status`, `persistd doctor`, and `persistd prune`.
+`cli.rs` parses `persistd apply`, `persistd daemon`, `persistd status`, `persistd doctor`, and `persistd prune`.
 
 `config.rs` owns `/data/persistd/config.json`, built-in defaults, exclusions, and tunables.
 
@@ -1121,28 +1174,36 @@ packages/persistd/
 
 `rootfs.rs` owns live root filesystem operations: `lstat`, readlink, hashing, copying, applying files, chmod/chown/mtime, xattrs, ACLs, capabilities, symlinks, hardlinks, special files, capability probes, and symlink ancestor safety.
 
-`reconcile.rs` owns the compare-first decision: config plus baseline plus rootfs state plus public truth plus capability info becomes persist, tombstone, prune, fallback metadata, or ignore.
+`apply.rs` applies public truth to rootfs: `removed/` first, `changed/` second, fallback metadata last.
 
-`restore.rs` applies public truth to rootfs: `removed/` first, `changed/` second, fallback metadata last.
+`daemon.rs` owns the long-running `persistd daemon` process: layout checks, lock, internal DB, watcher/audit startup, readiness, control socket, and single-writer command routing for status/doctor/prune.
 
-`watch.rs` owns inotify, rolling audit, overflow/degraded state, scheduling, and feeding candidate paths into `reconcile`.
+`watch.rs` owns raw inotify only: watch registration, low-level event decoding, overflow/degraded signals, and emitting dirty path candidates.
 
-`daemon.rs` owns `persistd run`: layout, lock, internal DB, restore, watch/audit, readiness, control socket, and single-writer command handling for status/doctor/prune.
+`audit.rs` owns rolling audit only: budgeted scans, cursors/epochs, missed-change discovery, deletion discovery, and emitting dirty path candidates.
 
-Do not split `status.rs`, `doctor.rs`, or `prune.rs` initially.
+`update.rs` owns the compare-first update decision: config plus baseline plus rootfs state plus public truth plus capability info becomes persist, tombstone, prune, fallback metadata, or ignore.
 
-Their CLI dispatch belongs in `cli.rs`.
+`status.rs` owns status request/response behavior.
 
-Their daemon request handling belongs in `daemon.rs` until it becomes too large.
+`doctor.rs` owns validation and safe repair behavior.
+
+`prune.rs` owns intentional cleanup behavior.
+
+`daemon.rs` wires these modules together.
+
+Do not collapse watch, audit, update, apply, status, doctor, or prune behavior into `daemon.rs`.
+
+`daemon.rs` should read like lifecycle and wiring, not filesystem comparison logic.
 
 First useful vertical slice:
 
-1. create layout
-2. generate/load a minimal baseline
-3. compare one regular file
-4. write `changed/` or `removed/`
-5. restore that one path
-6. test it end to end
+1. create layout.
+2. generate/load a minimal baseline.
+3. compare one regular file.
+4. write `changed/` or `removed/`.
+5. apply that one path.
+6. test it end to end.
 
 Then expand to metadata, watcher, audit, and control.
 
@@ -1160,11 +1221,11 @@ If changing the dependency strategy, invoke the grill skill first.
 
 Before committing `Cargo.toml`, rerun the `research` skill and verify:
 
-- current crate versions
-- required crate features
-- current Rust stable version
-- Docker base image availability
-- whether a lower MSRV is desirable
+- current crate versions.
+- required crate features.
+- current Rust stable version.
+- Docker base image availability.
+- whether a lower MSRV is desirable.
 
 Use researched versions as defaults, not as sacred pins.
 
@@ -1237,12 +1298,12 @@ The current CI workflow is:
 
 It currently:
 
-- checks out the repo
-- installs pnpm
-- sets up Node 26.1.0
-- sets up Go 1.24
-- runs `pnpm install --frozen-lockfile`
-- runs `pnpm check`
+- checks out the repo.
+- installs pnpm.
+- sets up Node 26.1.0.
+- sets up Go 1.24.
+- runs `pnpm install --frozen-lockfile`.
+- runs `pnpm check`.
 
 Replace Go setup with Rust setup.
 
@@ -1258,8 +1319,8 @@ The current smoke workflow is:
 
 It builds Docker images for:
 
-- linux/amd64 on ubuntu-24.04
-- linux/arm64 on ubuntu-24.04-arm
+- linux/amd64 on ubuntu-24.04.
+- linux/arm64 on ubuntu-24.04-arm.
 
 Then it runs:
 
@@ -1299,19 +1360,19 @@ Use actual final command syntax after testing.
 
 Update GitHub Actions:
 
-- remove `actions/setup-go`
-- add Rust toolchain setup
-- cache Cargo registry and target directories
-- pin versions consistently
-- include `cargo fmt --check`
-- include `cargo clippy --all-targets --all-features -- -D warnings`
-- include `cargo test --all-targets --all-features`
-- keep checks running on Ubuntu because Linux filesystem behavior matters
+- remove `actions/setup-go`.
+- add Rust toolchain setup.
+- cache Cargo registry and target directories.
+- pin versions consistently.
+- include `cargo fmt --check`.
+- include `cargo clippy --all-targets --all-features -- -D warnings`.
+- include `cargo test --all-targets --all-features`.
+- keep checks running on Ubuntu because Linux filesystem behavior matters.
 
 Recommended workflow shape:
 
 ```yaml
-- uses: dtolnay/rust-toolchain@stable
+- uses: dtolnay/rust-toolchain@stable.
   with:
     toolchain: "1.95.0"
     components: rustfmt, clippy
@@ -1357,24 +1418,32 @@ Generate baseline after rootfs and runtime files are assembled.
 
 Important:
 
-- baseline must describe final image contents
-- baseline must exclude itself
-- baseline must exclude runtime/mount paths
-- baseline must be generated before final runtime starts
+- baseline must describe final image contents.
+- baseline must exclude itself.
+- baseline must exclude runtime/mount paths.
+- baseline must be generated before final runtime starts.
 
 If Docker layering makes baseline generation awkward, stop and invoke grill.
 
 ## 43. Supervisor And Entrypoint
 
-Entrypoint should prepare runtime dirs and start Supervisor.
+Entrypoint should prepare runtime dirs, run one-shot apply, prepare workspace, and start Supervisor.
 
-Do not run a separate `persistd restore` in entrypoint.
+Entrypoint should run:
+
+```bash
+/opt/agentbox/bin/persistd apply
+```
+
+If apply exits non-zero, entrypoint should stop before Supervisor starts.
+
+Do not have Supervisor autorestart `persistd apply`.
 
 Supervisor should run:
 
 ```ini
 [program:persistd]
-command=/opt/agentbox/bin/persistd run
+command=/opt/agentbox/bin/persistd daemon
 user=root
 autorestart=true
 priority=1
@@ -1383,6 +1452,8 @@ priority=1
 code-server can start under Supervisor too.
 
 code-server remains gated by `/run/persistd/ready`.
+
+`persistd daemon` must not replay apply when Supervisor restarts it.
 
 ## 44. code-server Readiness Patch
 
@@ -1401,13 +1472,15 @@ Remove reliance on:
 /run/persistd/watch-failed
 ```
 
-Failure details should come from a simple status surface.
+Daemon readiness failure details should come from a simple status surface.
+
+If boot apply fails before Supervisor starts, failure details live in `.internal/state.sqlite` and `/data/persistd/.internal/apply-error.log` where possible.
 
 Options:
 
 - keep page generic: "persistd is not ready"
-- have code-server execute `persistd status --json`
-- have persistd write a small read-only status summary file
+- have code-server execute `persistd status --json`.
+- have persistd write a small read-only status summary file.
 
 This was not fully settled.
 
@@ -1457,10 +1530,10 @@ Add them when a real test needs them.
 
 Testing should follow vertical TDD:
 
-1. write one behavior test
-2. make it pass
-3. refactor if needed
-4. move to the next behavior
+1. write one behavior test.
+2. make it pass.
+3. refactor if needed.
+4. move to the next behavior.
 
 Do not write a giant suite against imagined module shapes before the first vertical slice works.
 
@@ -1468,88 +1541,88 @@ Do not write a giant suite against imagined module shapes before the first verti
 
 Path tests:
 
-- normal absolute paths
-- spaces
-- percent signs
-- newlines
-- Unicode
-- non-UTF-8 bytes on Linux
-- long path components
-- duplicate slash normalization
-- `..` handling
-- root path rejection
-- symlink ancestor safety
+- normal absolute paths.
+- spaces.
+- percent signs.
+- newlines.
+- Unicode.
+- non-UTF-8 bytes on Linux.
+- long path components.
+- duplicate slash normalization.
+- `..` handling.
+- root path rejection.
+- symlink ancestor safety.
 
 Baseline tests:
 
-- baseline generation excludes itself
-- baseline contains all image paths
-- file hash stored
-- symlink target stored
-- mode/uid/gid stored
-- compare equal path prunes delta
-- compare changed path writes delta
-- touched-but-equal large file does not persist
+- baseline generation excludes itself.
+- baseline contains all image paths.
+- file hash stored.
+- symlink target stored.
+- mode/uid/gid stored.
+- compare equal path prunes delta.
+- compare changed path writes delta.
+- touched-but-equal large file does not persist.
 
 Changed tests:
 
-- regular file create/update
-- directory create/update metadata
-- symlink create/update
-- hardlink preserve or fallback
-- metadata-only change creates `changed/`
-- file changing during copy is retried/requeued
+- regular file create/update.
+- directory create/update metadata.
+- symlink create/update.
+- hardlink preserve or fallback.
+- metadata-only change creates `changed/`.
+- file changing during copy is retried/requeued.
 
 Removed tests:
 
-- delete image file creates marker
-- delete image directory creates marker
-- delete new file prunes state without marker
-- remove marker undeletes image file
-- `removed/` plus `changed/` means changed wins
+- delete image file creates marker.
+- delete image directory creates marker.
+- delete new file prunes state without marker.
+- remove marker undeletes image file.
+- `removed/` plus `changed/` means changed wins.
 
 Metadata tests:
 
-- fallback xattr record applies
-- stale metadata pruned
-- user-edited metadata honored
-- duplicate metadata rejected or compacted
-- missing normal path metadata dropped
-- fallback-only special record allowed
+- fallback xattr record applies.
+- stale metadata pruned.
+- user-edited metadata honored.
+- duplicate metadata rejected or compacted.
+- missing normal path metadata dropped.
+- fallback-only special record allowed.
 
 Internal DB tests:
 
-- DB rebuilds from public truth
-- DB never overrides public truth
-- corrupt DB is rebuilt or fails clearly
-- lock prevents second daemon
-- command socket uses single writer
+- DB rebuilds from public truth.
+- DB never overrides public truth.
+- corrupt DB is rebuilt or fails clearly.
+- lock prevents second daemon.
+- command socket uses single writer.
 
 Daemon tests:
 
-- status talks to daemon
-- doctor talks to daemon
-- prune talks to daemon
-- commands fail when daemon not running
-- ready written only after watcher/audit initialized
-- ready removed at startup
+- status talks to daemon.
+- doctor talks to daemon.
+- prune talks to daemon.
+- commands fail when daemon not running.
+- ready written only after watcher/audit initialized.
+- ready removed at startup.
 
 Crash tests:
 
-- crash during changed write
-- crash during metadata rewrite
-- crash during restore
-- crash before ready
-- crash after ready with pending queue
+- crash during changed write.
+- crash during metadata rewrite.
+- crash during apply.
+- crash before ready.
+- crash after ready with pending queue.
 
 Platform capability tests:
 
-- fake/probed support matrix
-- xattr native vs fallback
-- ACL native vs fallback
-- hardlink native vs fallback
-- FIFO native vs fallback
-- device node denied path
+- fake/probed support matrix.
+- xattr native vs fallback.
+- ACL native vs fallback.
+- hardlink native vs fallback.
+- FIFO native vs fallback.
+- device node denied path.
 
 ## 47. Smoke Tests
 
@@ -1570,13 +1643,13 @@ New expected paths:
 
 Smoke should verify:
 
-- fresh boot reaches readiness
-- file modification persists across restart
-- file deletion persists across restart
-- deleting marker from `removed/` restores image file
-- returning file to baseline prunes changed entry
-- large touched-but-equal file does not balloon volume
-- custom config exclusions are ignored, not pruned
+- fresh boot reaches readiness.
+- file modification persists across restart.
+- file deletion persists across restart.
+- deleting marker from `removed/` restores image file.
+- returning file to baseline prunes changed entry.
+- large touched-but-equal file does not balloon volume.
+- custom config exclusions are ignored, not pruned.
 
 ## 48. Research Snapshot
 
@@ -1618,7 +1691,8 @@ Add `Cargo.lock`.
 Add CLI with commands:
 
 ```bash
-persistd run
+persistd apply
+persistd daemon
 persistd status
 persistd doctor
 persistd prune
@@ -1682,7 +1756,7 @@ Add baseline tests.
 
 ### Slice 5: Baseline Compare
 
-Implement compare-first pipeline.
+Implement compare-first update pipeline.
 
 Implement cheap gates.
 
@@ -1704,9 +1778,9 @@ Implement atomic writes.
 
 Implement crash recovery.
 
-### Slice 7: Restore Apply
+### Slice 7: Apply Public Truth
 
-Implement Rust-native restore.
+Implement Rust-native apply.
 
 Apply `removed/`.
 
@@ -1726,7 +1800,7 @@ Implement raw inotify watcher.
 
 Detect overflow.
 
-Feed compare-first pipeline.
+Feed compare-first update pipeline.
 
 Do not write before comparing.
 
@@ -1738,15 +1812,15 @@ Implement continuous budgeted audit.
 
 Scan whole non-excluded live filesystem.
 
-Feed compare-first pipeline.
+Feed compare-first update pipeline.
 
 Recover missed events.
 
-### Slice 10: Run Lifecycle
+### Slice 10: Daemon Lifecycle
 
-Implement full `persistd run`.
+Implement full `persistd daemon`.
 
-Restore first.
+Open internal state and report the last apply status if useful.
 
 Initialize watcher/audit.
 
@@ -1798,19 +1872,19 @@ Update docs and TODOs.
 
 Stop and invoke the grill skill if any of these become unclear:
 
-- exact baseline schema
-- exact `metadata.jsonl` schema
-- command socket protocol
-- readiness failure UX
-- default exclusions
-- ACL crate choice
-- hardlink fallback semantics
-- sparse file policy
-- non-UTF-8 path representation in JSONL
-- whether to fail or degrade when device restore lacks permission
-- whether `doctor` repair crosses into destructive behavior
-- whether `prune` should remove a class of public data
-- Docker build order for baseline generation
+- exact baseline schema.
+- exact `metadata.jsonl` schema.
+- command socket protocol.
+- readiness failure UX.
+- default exclusions.
+- ACL crate choice.
+- hardlink fallback semantics.
+- sparse file policy.
+- non-UTF-8 path representation in JSONL.
+- whether to fail or degrade when device apply lacks permission.
+- whether `doctor` repair crosses into destructive behavior.
+- whether `prune` should remove a class of public data.
+- Docker build order for baseline generation.
 
 Do not invent a policy silently.
 
@@ -1826,9 +1900,12 @@ The rewrite is acceptable when:
 - Rust `persistd` builds in Docker.
 - `/opt/persistd/baseline.sqlite` exists in the image.
 - `/data/persistd` uses the new layout.
-- `persistd run` is the only writer.
+- `persistd apply` is one-shot and exits before Supervisor starts.
+- `persistd daemon` is the only long-running writer.
+- Supervisor runs `persistd daemon`, not apply.
 - `persistd status`, `doctor`, and `prune` talk to the daemon.
 - readiness is based only on `/run/persistd/ready`.
+- `persistd daemon` does not replay apply when autorestarted.
 - changed files persist across restart.
 - deleted files persist across restart.
 - image updates flow through for untouched files.
