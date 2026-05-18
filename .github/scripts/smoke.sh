@@ -11,7 +11,7 @@ readonly SMOKE_DEFAULT_PORT="${SMOKE_DEFAULT_PORT:-8080}"
 readonly SMOKE_CUSTOM_PORT="${SMOKE_CUSTOM_PORT:-9090}"
 readonly SMOKE_TLS_PORT="${SMOKE_TLS_PORT:-9443}"
 readonly SMOKE_DEFAULT_HEALTH_URL="http://127.0.0.1:${SMOKE_DEFAULT_PORT}/healthz"
-readonly SMOKE_DEFAULT_READINESS_URL="${SMOKE_DEFAULT_HEALTH_URL}/readiness"
+readonly SMOKE_DEFAULT_READINESS_URL="${SMOKE_DEFAULT_HEALTH_URL}"
 readonly SMOKE_CUSTOM_BASE_URL="http://127.0.0.1:${SMOKE_CUSTOM_PORT}/agentbox"
 readonly SMOKE_TLS_BASE_URL="https://127.0.0.1:${SMOKE_TLS_PORT}/secure"
 readonly SMOKE_HEALTH_ATTEMPTS=120
@@ -154,11 +154,10 @@ run_custom_container() {
     -e "PORT=${SMOKE_CUSTOM_PORT}" \
     -e "AGENTBOX_PASSWORD=${SMOKE_PASSWORD}" \
     -e AGENTBOX_PUBLIC_URL=https://example.com/agentbox \
-    -e AGENTBOX_VOLUME_PATH=/persist \
     -e AGENTBOX_WORKSPACE_PATH=/workspace \
     -e AGENTBOX_ENABLE_METRICS=1 \
     -e 'AGENTBOX_PUBLIC_PROXY_URL_TEMPLATE=https://{{port}}.ports.example.com' \
-    -v "$CUSTOM_VOLUME_NAME:/persist" \
+    -v "$CUSTOM_VOLUME_NAME:/data" \
     "$IMAGE_TAG" >/dev/null
 }
 
@@ -171,8 +170,7 @@ run_tls_container() {
     -e "AGENTBOX_PUBLIC_URL=https://127.0.0.1:${SMOKE_TLS_PORT}/secure" \
     -e AGENTBOX_TLS_KEY_PATH=/certs/key.pem \
     -e AGENTBOX_TLS_CERT_PATH=/certs/cert.pem \
-    -e AGENTBOX_VOLUME_PATH=/tls-data \
-    -v "$TLS_VOLUME_NAME:/tls-data" \
+    -v "$TLS_VOLUME_NAME:/data" \
     -v "$PWD/tests/fixtures:/certs:ro" \
     "$IMAGE_TAG" >/dev/null
 }
@@ -264,8 +262,11 @@ assert_rootfs_persistence() {
   docker exec "$CONTAINER_NAME" sh -lc 'printf restored > /custom-restore'
   docker exec "$CONTAINER_NAME" sh -lc 'mkdir -p /foo123 && printf nested > /foo123/nested.txt'
 
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/persistence/db.sqlite'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -d /data/persistence/objects/blake3'
+  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/persistd/config.json'
+  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -d /data/persistd/changed'
+  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -d /data/persistd/removed'
+  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/persistd/metadata.jsonl'
+  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/persistd/.internal/lock'
   sleep 5
 
   docker restart "$CONTAINER_NAME" >/dev/null
@@ -290,7 +291,7 @@ assert_rootfs_persistence() {
 
 assert_custom_container() {
   log "checking custom container"
-  wait_for_url "${SMOKE_CUSTOM_BASE_URL}/healthz/readiness" "$SMOKE_READINESS_ATTEMPTS"
+  wait_for_url "${SMOKE_CUSTOM_BASE_URL}/healthz" "$SMOKE_READINESS_ATTEMPTS"
 
   local status_response
   status_response="$(fetch_text "${SMOKE_CUSTOM_BASE_URL}/healthz" "$SMOKE_READINESS_ATTEMPTS")"
@@ -345,12 +346,12 @@ assert_custom_container() {
   rm -f "$cookie_jar"
 
   docker exec "$CONTAINER_NAME" sh -lc 'printf custom > /custom-volume-path'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /persist/persistence/db.sqlite'
+  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/persistd/config.json'
 }
 
 assert_tls_container() {
   log "checking TLS container"
-  wait_for_url "${SMOKE_TLS_BASE_URL}/healthz/readiness" "$SMOKE_READINESS_ATTEMPTS"
+  wait_for_url "${SMOKE_TLS_BASE_URL}/healthz" "$SMOKE_READINESS_ATTEMPTS"
 
   local health_response
   health_response="$(fetch_text "${SMOKE_TLS_BASE_URL}/healthz" "$SMOKE_READINESS_ATTEMPTS")"

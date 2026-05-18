@@ -3,3 +3,4 @@
 !rootfs/**
 !vendor/**
 !packages/**
+packages/persistd/target

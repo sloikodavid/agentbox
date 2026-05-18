@@ -52,23 +52,18 @@ RUN case "${TARGETARCH}" in \
 COPY vendor/code-server/overlay/ /opt/code-server/current/
 COPY vendor/code-server/patches/ /tmp/code-server-patches/
 RUN if find /tmp/code-server-patches -name '*.patch' -print -quit | grep -q .; then \
-    for patch_file in /tmp/code-server-patches/*.patch; do patch -d /opt/code-server/current -p1 < "${patch_file}"; done; \
+    for patch_file in /tmp/code-server-patches/*.patch; do patch -d /opt/code-server/current -p1 < "${patch_file}" || exit 1; done; \
   fi
 
-FROM golang:1.24-trixie AS persistd-builder
+FROM rust:1.95.0-trixie AS persistd-builder
 
-ARG TARGETARCH
+WORKDIR /src
 
-ENV CGO_ENABLED=0 \
-  GOFLAGS=-trimpath
+COPY packages/persistd/ packages/persistd/
 
-WORKDIR /src/persistd
-
-COPY packages/persistd/ ./
-RUN go mod download
-
-RUN GOOS=linux GOARCH="${TARGETARCH}" \
-  go build -ldflags="-s -w" -o /out/persistd ./cmd/persistd
+RUN cargo build --release --locked --manifest-path packages/persistd/Cargo.toml \
+  && mkdir -p /out \
+  && cp packages/persistd/target/release/persistd /out/persistd
 
 FROM node:26.1.0-trixie-slim@sha256:424cafd2a035ed2b2d74acc3142b68b426fb62a47742c80a75e7117db02d6b30 AS runtime
 
@@ -195,6 +190,7 @@ COPY rootfs/ /
 
 RUN find / -xdev -name .gitkeep -type f -delete \
   && mkdir -p /data \
+  && mkdir -p /opt/persistd \
   && chown -R user:user /home/user \
   && chmod 0440 /etc/sudoers.d/user \
   && chmod +x /opt/agentbox/entrypoint.sh \

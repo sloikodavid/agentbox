@@ -93,6 +93,17 @@ packages/
         watcher_linux_test.go
         watcher_linux.go
         watcher_other.go
+    src/
+      cli.rs
+      config.rs
+      daemon.rs
+      internal.rs
+      layout.rs
+      main.rs
+      paths.rs
+      readiness.rs
+    Cargo.lock
+    Cargo.toml
     go.mod
     go.sum
 rootfs/
