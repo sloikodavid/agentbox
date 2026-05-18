@@ -94,6 +94,7 @@ packages/
         watcher_linux.go
         watcher_other.go
     src/
+      baseline.rs
       cli.rs
       config.rs
       daemon.rs
