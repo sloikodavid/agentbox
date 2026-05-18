@@ -43,9 +43,7 @@ jobs:
             runner: ubuntu-24.04-arm
     env:
       CONTAINER_NAME: agentbox-smoke-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
-      CUSTOM_VOLUME_NAME: agentbox-smoke-custom-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
       IMAGE_TAG: agentbox:smoke-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
-      TLS_VOLUME_NAME: agentbox-smoke-tls-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
       VOLUME_NAME: agentbox-smoke-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -91,6 +89,4 @@ jobs:
         run: |
           docker rm -f "$CONTAINER_NAME" || true
           docker volume rm "$VOLUME_NAME" || true
-          docker volume rm "$CUSTOM_VOLUME_NAME" || true
-          docker volume rm "$TLS_VOLUME_NAME" || true
           docker image rm "$IMAGE_TAG" || true

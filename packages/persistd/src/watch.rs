@@ -141,13 +141,15 @@ fn register_existing_dirs(
     start: &Path,
     config: &Config,
 ) -> Result<()> {
-    for entry in WalkDir::new(start).follow_links(false) {
+    let mut entries = WalkDir::new(start).follow_links(false).into_iter();
+    while let Some(entry) = entries.next() {
         let entry = entry?;
         if !entry.file_type().is_dir() {
             continue;
         }
         let public = public_path(root, entry.path())?;
         if public != "/" && is_excluded(&public, config) {
+            entries.skip_current_dir();
             continue;
         }
         let descriptor = inotify

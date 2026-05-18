@@ -35,65 +35,9 @@ description: Use when you're not sure where to look, need to find the right file
   extensions.json
 packages/
   persistd/
-    cmd/
-      persistd/
-        daemon.go
-        main_test.go
-        main.go
-    internal/
-      audit/
-        audit_test.go
-        audit.go
-      check/
-        check_test.go
-        check.go
-      config/
-        config_test.go
-        config.go
-      db/
-        migrations/
-          0001_initial.sql
-        db_test.go
-        db.go
-        objects.go
-        paths.go
-      gc/
-        gc_test.go
-        gc.go
-      heartbeat/
-        heartbeat_test.go
-        heartbeat.go
-      metadata/
-        metadata_linux_test.go
-        metadata_linux.go
-        metadata_other.go
-        metadata.go
-      objectstore/
-        objectstore_test.go
-        objectstore.go
-      processor/
-        processor_test.go
-        processor.go
-      restore/
-        lchown_linux.go
-        lchown_other.go
-        restore_linux_test.go
-        restore_test.go
-        restore.go
-      scheduler/
-        budget.go
-        dirty.go
-        scheduler_test.go
-        scheduler.go
-      storage/
-        storage_test.go
-        storage.go
-      watch/
-        watch.go
-        watcher_linux_test.go
-        watcher_linux.go
-        watcher_other.go
     src/
+      bin/
+        persistd-baseline.rs
       apply.rs
       audit.rs
       baseline.rs
@@ -104,6 +48,7 @@ packages/
       doctor.rs
       internal.rs
       layout.rs
+      lib.rs
       main.rs
       metadata.rs
       paths.rs
@@ -114,8 +59,6 @@ packages/
       watch.rs
     Cargo.lock
     Cargo.toml
-    go.mod
-    go.sum
 rootfs/
   etc/
     sudoers.d/

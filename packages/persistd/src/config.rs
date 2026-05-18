@@ -34,6 +34,7 @@ impl Default for Config {
                 "/etc/hostname".into(),
                 "/etc/hosts".into(),
                 "/etc/resolv.conf".into(),
+                "/home/user/.local/share/code-server".into(),
             ],
             audit: AuditConfig {
                 max_work_ms_per_tick: 10,

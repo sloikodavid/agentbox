@@ -1,25 +1,3 @@
-mod baseline;
-mod cli;
-mod config;
-mod control;
-mod daemon;
-mod doctor;
-mod internal;
-mod layout;
-mod metadata;
-mod paths;
-mod prune;
-mod readiness;
-mod status;
-mod update;
-
-#[cfg(unix)]
-mod apply;
-#[cfg(unix)]
-mod audit;
-#[cfg(unix)]
-mod watch;
-
 use anyhow::Result;
 use clap::Parser;
 
@@ -32,5 +10,5 @@ fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    cli::run(cli::Args::parse())
+    persistd::cli::run(persistd::cli::Args::parse())
 }

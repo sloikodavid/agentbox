@@ -61,9 +61,10 @@ WORKDIR /src
 
 COPY packages/persistd/ packages/persistd/
 
-RUN cargo build --release --locked --manifest-path packages/persistd/Cargo.toml \
+RUN cargo build --release --locked --manifest-path packages/persistd/Cargo.toml --bins \
   && mkdir -p /out \
-  && cp packages/persistd/target/release/persistd /out/persistd
+  && cp packages/persistd/target/release/persistd /out/persistd \
+  && cp packages/persistd/target/release/persistd-baseline /out/persistd-baseline
 
 FROM node:26.1.0-trixie-slim@sha256:424cafd2a035ed2b2d74acc3142b68b426fb62a47742c80a75e7117db02d6b30 AS runtime
 
@@ -186,6 +187,7 @@ RUN groupmod --new-name user node \
 
 COPY --from=code-server-installer /opt/code-server/current /opt/code-server/current
 COPY --from=persistd-builder /out/persistd /opt/agentbox/bin/persistd
+COPY --from=persistd-builder /out/persistd-baseline /opt/agentbox/bin/persistd-baseline
 COPY rootfs/ /
 
 RUN find / -xdev -name .gitkeep -type f -delete \
@@ -198,7 +200,9 @@ RUN find / -xdev -name .gitkeep -type f -delete \
   && ln -sf /opt/code-server/current/lib/vscode/bin/remote-cli/code-server /usr/local/bin/code \
   && ln -sf /opt/code-server/current/bin/code-server /usr/local/bin/code-server \
   && update-desktop-database /usr/share/applications \
-  && update-mime-database /usr/share/mime
+  && update-mime-database /usr/share/mime \
+  && /opt/agentbox/bin/persistd-baseline --root / --output /opt/persistd/baseline.sqlite \
+  && rm -f /opt/agentbox/bin/persistd-baseline
 
 EXPOSE 8080
 ENTRYPOINT ["/opt/agentbox/entrypoint.sh"]

@@ -84,10 +84,11 @@ pub fn run_once(
     let mut work_started = Instant::now();
     let budget = Duration::from_millis(config.audit.max_work_ms_per_tick.max(1));
 
-    for entry in WalkDir::new(root)
+    let mut entries = WalkDir::new(root)
         .follow_links(false)
         .same_file_system(true)
-    {
+        .into_iter();
+    while let Some(entry) = entries.next() {
         if stop.load(Ordering::Relaxed) {
             return Ok(());
         }
@@ -97,6 +98,9 @@ pub fn run_once(
         }
         let public = public_path(root, entry.path())?;
         if is_excluded(&public, config) {
+            if entry.file_type().is_dir() {
+                entries.skip_current_dir();
+            }
             continue;
         }
         seen.insert(public.clone());

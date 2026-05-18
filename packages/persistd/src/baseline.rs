@@ -152,7 +152,13 @@ mod imp {
         let display = display_path(&options.root, path)?;
         Ok(matches!(
             display.as_str(),
-            "/proc" | "/sys" | "/dev" | "/run" | "/data" | "/opt/persistd/baseline.sqlite"
+            "/proc"
+                | "/sys"
+                | "/dev"
+                | "/run"
+                | "/data"
+                | "/opt/persistd/baseline.sqlite"
+                | "/opt/agentbox/bin/persistd-baseline"
         ))
     }
 

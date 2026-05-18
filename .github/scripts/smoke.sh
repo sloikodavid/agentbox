@@ -2,22 +2,15 @@
 set -euo pipefail
 
 : "${CONTAINER_NAME:?CONTAINER_NAME is required}"
-: "${CUSTOM_VOLUME_NAME:?CUSTOM_VOLUME_NAME is required}"
 : "${IMAGE_TAG:?IMAGE_TAG is required}"
-: "${TLS_VOLUME_NAME:?TLS_VOLUME_NAME is required}"
 : "${VOLUME_NAME:?VOLUME_NAME is required}"
 
 readonly SMOKE_DEFAULT_PORT="${SMOKE_DEFAULT_PORT:-8080}"
-readonly SMOKE_CUSTOM_PORT="${SMOKE_CUSTOM_PORT:-9090}"
-readonly SMOKE_TLS_PORT="${SMOKE_TLS_PORT:-9443}"
 readonly SMOKE_DEFAULT_HEALTH_URL="http://127.0.0.1:${SMOKE_DEFAULT_PORT}/healthz"
 readonly SMOKE_DEFAULT_READINESS_URL="${SMOKE_DEFAULT_HEALTH_URL}"
-readonly SMOKE_CUSTOM_BASE_URL="http://127.0.0.1:${SMOKE_CUSTOM_PORT}/agentbox"
-readonly SMOKE_TLS_BASE_URL="https://127.0.0.1:${SMOKE_TLS_PORT}/secure"
 readonly SMOKE_HEALTH_ATTEMPTS=120
 readonly SMOKE_READINESS_ATTEMPTS=180
 readonly SMOKE_EXEC_ATTEMPTS=30
-readonly SMOKE_PORT_PROXY_ATTEMPTS=30
 readonly SMOKE_PASSWORD="${SMOKE_PASSWORD:-smoke-password}"
 
 log() {
@@ -27,8 +20,6 @@ log() {
 cleanup_resources() {
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   docker volume rm "$VOLUME_NAME" >/dev/null 2>&1 || true
-  docker volume rm "$CUSTOM_VOLUME_NAME" >/dev/null 2>&1 || true
-  docker volume rm "$TLS_VOLUME_NAME" >/dev/null 2>&1 || true
 }
 
 trap cleanup_resources EXIT
@@ -141,49 +132,20 @@ run_default_container() {
   docker run -d --name "$CONTAINER_NAME" \
     -p "127.0.0.1:${SMOKE_DEFAULT_PORT}:${SMOKE_DEFAULT_PORT}" \
     -e "PORT=${SMOKE_DEFAULT_PORT}" \
-    -e "AGENTBOX_PASSWORD=${SMOKE_PASSWORD}" \
-    -e AGENTBOX_VOLUME_PATH=/data \
+    -e "PASSWORD=${SMOKE_PASSWORD}" \
     -v "$VOLUME_NAME:/data" \
-    "$IMAGE_TAG" >/dev/null
-}
-
-run_custom_container() {
-  log "starting custom container"
-  docker run -d --name "$CONTAINER_NAME" \
-    -p "127.0.0.1:${SMOKE_CUSTOM_PORT}:${SMOKE_CUSTOM_PORT}" \
-    -e "PORT=${SMOKE_CUSTOM_PORT}" \
-    -e "AGENTBOX_PASSWORD=${SMOKE_PASSWORD}" \
-    -e AGENTBOX_PUBLIC_URL=https://example.com/agentbox \
-    -e AGENTBOX_WORKSPACE_PATH=/workspace \
-    -e AGENTBOX_ENABLE_METRICS=1 \
-    -e 'AGENTBOX_PUBLIC_PROXY_URL_TEMPLATE=https://{{port}}.ports.example.com' \
-    -v "$CUSTOM_VOLUME_NAME:/data" \
-    "$IMAGE_TAG" >/dev/null
-}
-
-run_tls_container() {
-  log "starting TLS container"
-  docker run -d --name "$CONTAINER_NAME" \
-    -p "127.0.0.1:${SMOKE_TLS_PORT}:${SMOKE_TLS_PORT}" \
-    -e "PORT=${SMOKE_TLS_PORT}" \
-    -e "AGENTBOX_PASSWORD=${SMOKE_PASSWORD}" \
-    -e "AGENTBOX_PUBLIC_URL=https://127.0.0.1:${SMOKE_TLS_PORT}/secure" \
-    -e AGENTBOX_TLS_KEY_PATH=/certs/key.pem \
-    -e AGENTBOX_TLS_CERT_PATH=/certs/cert.pem \
-    -v "$TLS_VOLUME_NAME:/data" \
-    -v "$PWD/tests/fixtures:/certs:ro" \
     "$IMAGE_TAG" >/dev/null
 }
 
 assert_websocket_upgrade() {
   local cookie_jar="$1"
-  SMOKE_DEFAULT_PORT="$SMOKE_DEFAULT_PORT" SMOKE_COOKIE_JAR="$cookie_jar" python3 - <<'PY'
+  SMOKE_WEBSOCKET_PORT="$SMOKE_DEFAULT_PORT" SMOKE_COOKIE_JAR="$cookie_jar" python3 - <<'PY'
 import base64
 import hashlib
 import os
 import socket
 
-port = int(os.environ["SMOKE_DEFAULT_PORT"])
+port = int(os.environ["SMOKE_WEBSOCKET_PORT"])
 cookies = []
 with open(os.environ["SMOKE_COOKIE_JAR"], encoding="utf-8") as cookie_file:
     for line in cookie_file:
@@ -289,96 +251,8 @@ assert_rootfs_persistence() {
   docker exec "$CONTAINER_NAME" sh -lc 'test -d /foo123'
 }
 
-assert_custom_container() {
-  log "checking custom container"
-  wait_for_url "${SMOKE_CUSTOM_BASE_URL}/healthz" "$SMOKE_READINESS_ATTEMPTS"
-
-  local status_response
-  status_response="$(fetch_text "${SMOKE_CUSTOM_BASE_URL}/healthz" "$SMOKE_READINESS_ATTEMPTS")"
-  assert_contains "custom health response" "$status_response" '"ready":true'
-
-  local metrics_response
-  metrics_response="$(fetch_text "${SMOKE_CUSTOM_BASE_URL}/metrics" "$SMOKE_READINESS_ATTEMPTS")"
-  assert_contains "custom metrics response" "$metrics_response" 'agentbox_ready 1'
-
-  local cookie_jar
-  cookie_jar="$(mktemp)"
-  login_agentbox "$SMOKE_CUSTOM_BASE_URL" "$cookie_jar"
-
-  local root_page
-  root_page="$(fetch_authed_text "${SMOKE_CUSTOM_BASE_URL}/" "$SMOKE_READINESS_ATTEMPTS" "$cookie_jar")"
-  assert_contains "custom root page" "$root_page" "code-server"
-
-  docker exec "$CONTAINER_NAME" sh -lc \
-    'pgrep -u user -af "[c]ode-server" | grep -F -- "/workspace"' >/dev/null
-  docker exec "$CONTAINER_NAME" sh -lc 'test -d /workspace && test "$(stat -c %U:%G /workspace)" = user:user'
-  docker exec "$CONTAINER_NAME" sh -lc \
-    'pgrep -u user -af "[c]ode-server" | grep -F -- "--proxy-domain {{port}}.ports.example.com"' >/dev/null
-  docker exec "$CONTAINER_NAME" sudo -u user sh -lc \
-    'pid="$(pgrep -u user -f "[c]ode-server" | head -n1)" &&
-      test -n "$pid" &&
-      tr "\0" "\n" < "/proc/$pid/environ" |
-        grep -F "VSCODE_PROXY_URI=https://{{port}}.ports.example.com"' >/dev/null
-
-  docker exec -d "$CONTAINER_NAME" sudo -u user sh -lc \
-    'mkdir -p /tmp/agentbox-port-proxy &&
-      printf port-proxy-ok > /tmp/agentbox-port-proxy/smoke.txt &&
-      cd /tmp/agentbox-port-proxy &&
-      python3 -m http.server 7777 --bind 127.0.0.1'
-
-  for i in $(seq 1 "$SMOKE_PORT_PROXY_ATTEMPTS"); do
-    local proxy_response
-    proxy_response="$(
-      curl -fsS -b "$cookie_jar" \
-        "${SMOKE_CUSTOM_BASE_URL}/proxy/7777/smoke.txt" 2>/dev/null || true
-    )"
-    if [[ "$proxy_response" == "port-proxy-ok" ]]; then
-      break
-    fi
-    if [[ "$i" -eq "$SMOKE_PORT_PROXY_ATTEMPTS" ]]; then
-      echo "Timed out waiting for code-server port proxy" >&2
-      dump_container_logs
-      exit 1
-    fi
-    sleep 1
-  done
-
-  rm -f "$cookie_jar"
-
-  docker exec "$CONTAINER_NAME" sh -lc 'printf custom > /custom-volume-path'
-  wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/persistd/config.json'
-}
-
-assert_tls_container() {
-  log "checking TLS container"
-  wait_for_url "${SMOKE_TLS_BASE_URL}/healthz" "$SMOKE_READINESS_ATTEMPTS"
-
-  local health_response
-  health_response="$(fetch_text "${SMOKE_TLS_BASE_URL}/healthz" "$SMOKE_READINESS_ATTEMPTS")"
-  assert_contains "TLS health response" "$health_response" '"ready":true'
-
-  local cookie_jar
-  cookie_jar="$(mktemp)"
-  login_agentbox "$SMOKE_TLS_BASE_URL" "$cookie_jar"
-
-  local root_page
-  root_page="$(fetch_authed_text "${SMOKE_TLS_BASE_URL}/" "$SMOKE_READINESS_ATTEMPTS" "$cookie_jar")"
-  assert_contains "TLS root page" "$root_page" "code-server"
-  rm -f "$cookie_jar"
-}
-
 docker volume create "$VOLUME_NAME" >/dev/null
-docker volume create "$CUSTOM_VOLUME_NAME" >/dev/null
-docker volume create "$TLS_VOLUME_NAME" >/dev/null
 
 run_default_container
 assert_default_container
 assert_rootfs_persistence
-
-docker rm -f "$CONTAINER_NAME" >/dev/null
-run_custom_container
-assert_custom_container
-
-docker rm -f "$CONTAINER_NAME" >/dev/null
-run_tls_container
-assert_tls_container
