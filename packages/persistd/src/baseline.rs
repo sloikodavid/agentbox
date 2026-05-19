@@ -158,7 +158,7 @@ mod imp {
                 | "/run"
                 | "/data"
                 | "/opt/persistd/baseline.sqlite"
-                | "/opt/agentbox/bin/persistd-baseline"
+                | "/opt/persistd/bin/persistd-baseline"
         ))
     }
 
@@ -398,9 +398,11 @@ mod imp {
             fs::create_dir_all(root.join("opt/persistd")).unwrap();
             fs::create_dir_all(root.join("data")).unwrap();
             fs::create_dir_all(root.join("run")).unwrap();
+            fs::create_dir_all(root.join("opt/persistd/bin")).unwrap();
             fs::write(&output, "old baseline").unwrap();
             fs::write(root.join("data/user-file"), "ignored").unwrap();
             fs::write(root.join("run/runtime-file"), "ignored").unwrap();
+            fs::write(root.join("opt/persistd/bin/persistd-baseline"), "ignored").unwrap();
 
             generate(&GenerateOptions {
                 root: root.clone(),
@@ -415,6 +417,7 @@ mod imp {
                 "/data/user-file",
                 "/run",
                 "/run/runtime-file",
+                "/opt/persistd/bin/persistd-baseline",
             ] {
                 let found: Option<String> = conn
                     .query_row(

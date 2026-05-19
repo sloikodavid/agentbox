@@ -186,8 +186,8 @@ RUN groupmod --new-name user node \
   && mkdir -p /home/user
 
 COPY --from=code-server-installer /opt/code-server/current /opt/code-server/current
-COPY --from=persistd-builder /out/persistd /opt/agentbox/bin/persistd
-COPY --from=persistd-builder /out/persistd-baseline /opt/agentbox/bin/persistd-baseline
+COPY --from=persistd-builder /out/persistd /opt/persistd/bin/persistd
+COPY --from=persistd-builder /out/persistd-baseline /opt/persistd/bin/persistd-baseline
 COPY rootfs/ /
 
 RUN find / -xdev -name .gitkeep -type f -delete \
@@ -201,8 +201,8 @@ RUN find / -xdev -name .gitkeep -type f -delete \
   && ln -sf /opt/code-server/current/bin/code-server /usr/local/bin/code-server \
   && update-desktop-database /usr/share/applications \
   && update-mime-database /usr/share/mime \
-  && /opt/agentbox/bin/persistd-baseline --root / --output /opt/persistd/baseline.sqlite \
-  && rm -f /opt/agentbox/bin/persistd-baseline
+  && /opt/persistd/bin/persistd-baseline --root / --output /opt/persistd/baseline.sqlite \
+  && rm -f /opt/persistd/bin/persistd-baseline
 
 EXPOSE 8080
 ENTRYPOINT ["/opt/agentbox/entrypoint.sh"]

@@ -9,7 +9,7 @@ use persistd::baseline::{GenerateOptions, generate};
 #[derive(Debug, Parser)]
 #[command(
     name = "persistd-baseline",
-    about = "Generate the Agentbox image baseline database"
+    about = "Generate the persistd image baseline database"
 )]
 struct Args {
     #[arg(long, default_value = "/")]

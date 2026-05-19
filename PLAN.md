@@ -12,7 +12,7 @@ Do not treat the current Go implementation as the design to port.
 
 The goal is not "Go rewritten in Rust."
 
-The goal is a clean, open, image-delta persistence system for Agentbox.
+The goal is a clean, open, image-delta persistence system for container images.
 
 ## 0.1 Required Context To Read First
 
@@ -109,7 +109,7 @@ Include your recommended answer.
 
 ## 1. Product Contract
 
-Agentbox should feel like a mutable Linux system.
+An application that uses persistd should feel like a mutable Linux system.
 
 The user should be able to change files anywhere in the container root filesystem, except excluded runtime paths.
 
@@ -563,7 +563,7 @@ There is only one active runtime config.
 
 Do not put runtime config in `/opt/persistd`.
 
-`/opt/persistd` is image baseline data only.
+`/opt/persistd` is persistd-owned image data, including the daemon binary and baseline database.
 
 Do not put config templates in `/opt/persistd`.
 
@@ -1121,7 +1121,7 @@ Set `rust-version = "1.95"` unless the team intentionally chooses a lower MSRV.
 Compile the binary to:
 
 ```text
-/opt/agentbox/bin/persistd
+/opt/persistd/bin/persistd
 ```
 
 Generate baseline during image build and install:
@@ -1411,7 +1411,7 @@ cargo build --release --locked --manifest-path packages/persistd/Cargo.toml
 Copy binary:
 
 ```text
-COPY --from=persistd-builder /out/persistd /opt/agentbox/bin/persistd
+COPY --from=persistd-builder /out/persistd /opt/persistd/bin/persistd
 ```
 
 Generate baseline after rootfs and runtime files are assembled.
@@ -1432,7 +1432,7 @@ Entrypoint should prepare runtime dirs, run one-shot apply, prepare workspace, a
 Entrypoint should run:
 
 ```bash
-/opt/agentbox/bin/persistd apply
+/opt/persistd/bin/persistd apply
 ```
 
 If apply exits non-zero, entrypoint should stop before Supervisor starts.
@@ -1443,7 +1443,7 @@ Supervisor should run:
 
 ```ini
 [program:persistd]
-command=/opt/agentbox/bin/persistd daemon
+command=/opt/persistd/bin/persistd daemon
 user=root
 autorestart=true
 priority=1

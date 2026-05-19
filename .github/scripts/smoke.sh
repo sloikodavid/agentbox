@@ -5,6 +5,8 @@ set -euo pipefail
 : "${IMAGE_TAG:?IMAGE_TAG is required}"
 : "${VOLUME_NAME:?VOLUME_NAME is required}"
 
+# Runtime settings. CI provides the image/container/volume names above; these
+# defaults keep the script runnable by hand when debugging.
 readonly SMOKE_DEFAULT_PORT="${SMOKE_DEFAULT_PORT:-8080}"
 readonly SMOKE_DEFAULT_HEALTH_URL="http://127.0.0.1:${SMOKE_DEFAULT_PORT}/healthz"
 readonly SMOKE_DEFAULT_READINESS_URL="${SMOKE_DEFAULT_HEALTH_URL}"
@@ -13,10 +15,12 @@ readonly SMOKE_READINESS_ATTEMPTS=180
 readonly SMOKE_EXEC_ATTEMPTS=30
 readonly SMOKE_PASSWORD="${SMOKE_PASSWORD:-smoke-password}"
 
+# Logging and cleanup.
 log() {
   printf '[smoke] %s\n' "$*"
 }
 
+# Keep each run isolated, even when a previous CI attempt left resources behind.
 cleanup_resources() {
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
   docker volume rm "$VOLUME_NAME" >/dev/null 2>&1 || true
@@ -38,6 +42,7 @@ on_failure() {
 
 trap 'on_failure "$LINENO"' ERR
 
+# Assertion and retry helpers.
 assert_contains() {
   local label="$1"
   local haystack="$2"
@@ -89,10 +94,13 @@ fetch_text() {
   curl_with_retries "$url" "$attempts" "$@"
 }
 
+# Authenticated HTTP helpers.
 login_agentbox() {
   local base_url="$1"
   local cookie_jar="$2"
   rm -f "$cookie_jar"
+
+  # Load the login page first so code-server can issue its auth/session cookie.
   fetch_text "${base_url}/login" "$SMOKE_READINESS_ATTEMPTS" -c "$cookie_jar" -b "$cookie_jar" >/dev/null
   curl_with_retries "${base_url}/login" "$SMOKE_READINESS_ATTEMPTS" \
     -c "$cookie_jar" \
@@ -110,6 +118,7 @@ fetch_authed_text() {
   fetch_text "$url" "$attempts" -b "$cookie_jar"
 }
 
+# Docker command helpers.
 wait_for_exec() {
   local attempts="$1"
   shift
@@ -139,6 +148,9 @@ run_default_container() {
 
 assert_websocket_upgrade() {
   local cookie_jar="$1"
+
+  # curl cannot complete a WebSocket handshake assertion on its own. This sends
+  # the minimum authenticated HTTP upgrade request and verifies the response.
   SMOKE_WEBSOCKET_PORT="$SMOKE_DEFAULT_PORT" SMOKE_COOKIE_JAR="$cookie_jar" python3 - <<'PY'
 import base64
 import hashlib
@@ -197,8 +209,9 @@ assert headers.get("sec-websocket-accept") == expected_accept, text
 PY
 }
 
-assert_default_container() {
-  log "checking default container"
+# Smoke scenario 1: the image boots, serves code-server, and supports auth.
+assert_web_app_smoke() {
+  log "checking web app startup, auth, and code-server"
   wait_for_url "$SMOKE_DEFAULT_HEALTH_URL" "$SMOKE_HEALTH_ATTEMPTS"
   wait_for_url "$SMOKE_DEFAULT_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
 
@@ -216,21 +229,27 @@ assert_default_container() {
   docker exec "$CONTAINER_NAME" sudo -u user code --version >/dev/null 2>&1
 }
 
-assert_rootfs_persistence() {
-  log "checking persistd persistence"
+# Smoke scenario 2: persistd records filesystem changes and applies them on boot.
+assert_persistd_applies_changes() {
+  log "checking persistd applies filesystem changes"
 
+  log "creating files that should be applied after restart"
   docker exec "$CONTAINER_NAME" \
     sudo -u user sh -lc 'printf hello > /home/user/Desktop/smoke.txt'
   docker exec "$CONTAINER_NAME" sh -lc 'printf restored > /custom-restore'
   docker exec "$CONTAINER_NAME" sh -lc 'mkdir -p /foo123 && printf nested > /foo123/nested.txt'
 
+  log "waiting for persistd to record changed filesystem state"
   wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/persistd/config.json'
   wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -d /data/persistd/changed'
   wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -d /data/persistd/removed'
   wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/persistd/metadata.jsonl'
   wait_for_exec "$SMOKE_EXEC_ATTEMPTS" sh -lc 'test -f /data/persistd/.internal/lock'
+
+  # Give persistd's watcher time to flush recent changes before restarting.
   sleep 5
 
+  log "restarting container and checking changed files are applied"
   docker restart "$CONTAINER_NAME" >/dev/null
   wait_for_url "$SMOKE_DEFAULT_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
   docker exec "$CONTAINER_NAME" sh -lc 'test "$(cat /home/user/Desktop/smoke.txt)" = hello'
@@ -238,12 +257,16 @@ assert_rootfs_persistence() {
   docker exec "$CONTAINER_NAME" sh -lc 'test -d /foo123'
   docker exec "$CONTAINER_NAME" sh -lc 'test "$(cat /foo123/nested.txt)" = nested'
 
+  log "removing a file and checking the removal is applied"
   docker exec "$CONTAINER_NAME" sh -lc 'rm /custom-restore'
+
+  # Give persistd's watcher time to flush the removal before restarting.
   sleep 5
   docker restart "$CONTAINER_NAME" >/dev/null
   wait_for_url "$SMOKE_DEFAULT_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
   docker exec "$CONTAINER_NAME" sh -lc 'test ! -e /custom-restore'
 
+  log "recreating container with the same volume and checking changes are applied"
   docker rm -f "$CONTAINER_NAME" >/dev/null
   run_default_container
   wait_for_url "$SMOKE_DEFAULT_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
@@ -251,8 +274,9 @@ assert_rootfs_persistence() {
   docker exec "$CONTAINER_NAME" sh -lc 'test -d /foo123'
 }
 
+# Main smoke flow.
 docker volume create "$VOLUME_NAME" >/dev/null
 
 run_default_container
-assert_default_container
-assert_rootfs_persistence
+assert_web_app_smoke
+assert_persistd_applies_changes

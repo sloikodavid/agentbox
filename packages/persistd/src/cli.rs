@@ -8,10 +8,7 @@ use crate::apply;
 use crate::{config, control, daemon, doctor, internal, layout, paths::Paths, prune, status};
 
 #[derive(Debug, Parser)]
-#[command(
-    name = "persistd",
-    about = "Agentbox root filesystem persistence daemon"
-)]
+#[command(name = "persistd", about = "Root filesystem persistence daemon")]
 pub struct Args {
     #[command(subcommand)]
     command: Command,
