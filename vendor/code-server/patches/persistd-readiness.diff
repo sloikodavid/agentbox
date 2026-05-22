@@ -1,0 +1,164 @@
+diff --git a/src/node/persistd/readiness.ts b/src/node/persistd/readiness.ts
+new file mode 100644
+index 00000000..5032119e
+--- /dev/null
++++ b/src/node/persistd/readiness.ts
+@@ -0,0 +1,80 @@
++import { promises as fs } from "fs"
++
++const persistdRunDir = "/run/persistd"
++const readyPath = `${persistdRunDir}/ready`
++
++type PersistdReadiness = {
++  ready: boolean
++  message: string
++  updatedAt?: string
++}
++
++export async function checkPersistdReadiness(): Promise<PersistdReadiness> {
++  let data: string
++  try {
++    data = await fs.readFile(readyPath, "utf8")
++  } catch (error: any) {
++    if (error?.code === "ENOENT") {
++      return { ready: false, message: "persistd is starting" }
++    }
++
++    return { ready: false, message: "persistd ready file cannot be read" }
++  }
++
++  let parsed: { ready?: unknown; updatedAt?: unknown }
++  try {
++    parsed = JSON.parse(data)
++  } catch {
++    return { ready: false, message: "persistd ready file is invalid" }
++  }
++
++  if (parsed.ready !== true) {
++    return { ready: false, message: "persistd is starting" }
++  }
++
++  if (typeof parsed.updatedAt !== "string" || parsed.updatedAt.length === 0) {
++    return { ready: false, message: "persistd ready file is invalid" }
++  }
++
++  return {
++    ready: true,
++    message: "persistd is ready",
++    updatedAt: parsed.updatedAt,
++  }
++}
++
++export function renderStartupPage(healthUrl: string): string {
++  return `<!doctype html>
++<html lang="en">
++<head>
++<meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<meta name="color-scheme" content="light dark">
++<title>Preparing workspace</title>
++<style>
++html,body{height:100%;overflow:hidden;width:100%}
++body{margin:0;background:#fff;color:#111;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;display:grid;place-items:center}
++main{box-sizing:border-box;padding:2rem}
++h1{font-size:1.25rem;font-weight:600;line-height:1.3;margin:0}
++@media (prefers-color-scheme:dark){body{background:#1e1e1e;color:#ccc}}
++</style>
++</head>
++<body>
++<main><h1>Preparing workspace</h1></main>
++<script>
++async function waitUntilReady() {
++  try {
++    const healthUrl = ${JSON.stringify(healthUrl)};
++    if ((await fetch(healthUrl, { cache: "no-store" })).ok) {
++      location.reload();
++      return;
++    }
++  } catch {}
++  setTimeout(waitUntilReady, 1000);
++}
++waitUntilReady();
++</script>
++</body>
++</html>
++`
++}
+diff --git a/src/node/routes/health.ts b/src/node/routes/health.ts
+index faf1f9c7..3a6534f5 100644
+--- a/src/node/routes/health.ts
++++ b/src/node/routes/health.ts
+@@ -1,12 +1,15 @@
+ import { Router } from "express"
++import { checkPersistdReadiness } from "../persistd/readiness"
+ import { wss, Router as WsRouter } from "../wsRouter"
+ 
+ export const router = Router()
+ 
+-router.get("/", (req, res) => {
+-  res.json({
++router.get("/", async (req, res) => {
++  const persistd = await checkPersistdReadiness()
++  res.status(persistd.ready ? 200 : 503).json({
+     status: req.heart.alive() ? "alive" : "expired",
+     lastHeartbeat: req.heart.lastHeartbeat,
++    persistd,
+   })
+ })
+ 
+diff --git a/src/node/routes/index.ts b/src/node/routes/index.ts
+index c89e2f59..fc8f1841 100644
+--- a/src/node/routes/index.ts
++++ b/src/node/routes/index.ts
+@@ -11,7 +11,8 @@ import { App } from "../app"
+ import { AuthType, DefaultedArgs } from "../cli"
+ import { commit, rootPath } from "../constants"
+ import { Heart } from "../heart"
+-import { redirect } from "../http"
++import { checkPersistdReadiness, renderStartupPage } from "../persistd/readiness"
++import { constructRedirectPath, redirect } from "../http"
+ import { CoderSettings, SettingsProvider } from "../settings"
+ import { UpdateProvider } from "../update"
+ import { getMediaMime, paths } from "../util"
+@@ -153,6 +154,41 @@ export const register = async (
+     }),
+   )
+ 
++  const persistdGate: express.RequestHandler = async (req, res, next) => {
++    if (/^\/healthz\/?$/.test(req.path)) {
++      return next()
++    }
++
++    const persistd = await checkPersistdReadiness()
++    if (persistd.ready) {
++      return next()
++    }
++
++    if (req.headers.accept?.includes("text/html")) {
++      res.setHeader("Cache-Control", "no-store")
++      res.setHeader("Retry-After", "1")
++      return res.status(503).type("html").send(renderStartupPage(constructRedirectPath(req, {}, "healthz")))
++    }
++
++    return res.status(503).type("text").send("Starting workspace\n")
++  }
++
++  app.router.use(persistdGate)
++  app.wsRouter.get(/.*/, async (req, _, next) => {
++    if (/^\/healthz\/?$/.test(req.path)) {
++      return next()
++    }
++
++    const persistd = await checkPersistdReadiness()
++    if (persistd.ready) {
++      return next()
++    }
++
++    const wsReq = req as WebsocketRequest & { _ws_handled: boolean }
++    wsReq._ws_handled = true
++    wsReq.ws.end("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n")
++  })
++
+   app.router.use("/healthz", health.router)
+   app.wsRouter.use("/healthz", health.wsRouter.router)
+ 

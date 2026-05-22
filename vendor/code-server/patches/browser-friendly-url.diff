@@ -1,0 +1,57 @@
+diff --git a/src/node/main.ts b/src/node/main.ts
+index c2d3bd57..361a9227 100644
+--- a/src/node/main.ts
++++ b/src/node/main.ts
+@@ -10,7 +10,7 @@ import { commit, version, vsRootPath } from "./constants"
+ import { loadCustomStrings } from "./i18n"
+ import { register } from "./routes"
+ import { VSCodeModule } from "./routes/vscode"
+-import { isDirectory, open } from "./util"
++import { isDirectory, open, toBrowserAddress } from "./util"
+ import { wrapper } from "./wrapper"
+ 
+ /**
+@@ -146,6 +146,9 @@ export const runCodeServer = async (
+ 
+   logger.info(`Using config file ${args.config}`)
+   logger.info(`${protocol.toUpperCase()} server listening on ${serverAddress.toString()}`)
++  if (typeof serverAddress !== "string") {
++    logger.info(`Open in browser: ${toBrowserAddress(serverAddress).toString()}`)
++  }
+   if (args.auth === AuthType.Password) {
+     logger.info("  - Authentication is enabled")
+     if (args.usingEnvPassword) {
+diff --git a/src/node/util.ts b/src/node/util.ts
+index b7c0c3fa..93f31068 100644
+--- a/src/node/util.ts
++++ b/src/node/util.ts
+@@ -420,18 +420,24 @@ export function constructOpenOptions(platform: NodeJS.Platform | "wsl", urlSearc
+   }
+ }
+ 
+-/**
+- * Try opening an address using whatever the system has set for opening URLs.
+- */
+-export const open = async (address: URL | string): Promise<void> => {
++export const toBrowserAddress = (address: URL | string): URL => {
+   if (typeof address === "string") {
+     throw new Error("Cannot open socket paths")
+   }
+-  // Web sockets do not seem to work if browsing with 0.0.0.0.
++
+   const url = new URL(address)
+   if (url.hostname === "0.0.0.0") {
+     url.hostname = "localhost"
+   }
++
++  return url
++}
++
++/**
++ * Try opening an address using whatever the system has set for opening URLs.
++ */
++export const open = async (address: URL | string): Promise<void> => {
++  const url = toBrowserAddress(address)
+   const platform = (await isWsl(process.platform, os.release(), "/proc/version")) ? "wsl" : process.platform
+   const { command, args, urlSearch } = constructOpenOptions(platform, url.search)
+   url.search = urlSearch

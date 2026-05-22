@@ -1,0 +1,103 @@
+:root {
+	color-scheme: light dark;
+	--vscode-button-background: #0e639c;
+	--vscode-button-foreground: #ffffff;
+	--vscode-button-hoverBackground: #006bb3;
+	--vscode-editor-background: #ffffff;
+	--vscode-errorForeground: #a31515;
+	--vscode-editorHoverWidget-background: #f3f3f3;
+	--vscode-editorHoverWidget-border: #c8c8c8;
+	--vscode-editorHoverWidget-foreground: #1f1f1f;
+	--vscode-focusBorder: #007fd4;
+	--auth-input-focus: #8b8b8b;
+	--auth-message-background: #f4f4f4;
+	--auth-message-border: #dddddd;
+	--vscode-foreground: #1f1f1f;
+	--vscode-input-background: #ffffff;
+	--vscode-input-border: #cecece;
+	--vscode-input-foreground: #1f1f1f;
+	--vscode-cornerRadius-medium: 6px;
+	--vscode-toolbar-activeBackground: #a6a6a650;
+	--vscode-toolbar-hoverBackground: #b8b8b850;
+	--vscode-toolbar-hoverOutline: transparent;
+	--vscode-shadow-hover: 0 2px 8px #00000026;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--vscode-editor-background: #1e1e1e;
+		--vscode-editorHoverWidget-background: #252526;
+		--vscode-editorHoverWidget-border: #454545;
+		--vscode-editorHoverWidget-foreground: #cccccc;
+		--vscode-errorForeground: #f48771;
+		--auth-input-focus: #9a9a9a;
+		--auth-message-background: #2a2a2a;
+		--auth-message-border: #3a3a3a;
+		--vscode-foreground: #cccccc;
+		--vscode-input-background: #3c3c3c;
+		--vscode-input-border: transparent;
+		--vscode-input-foreground: #cccccc;
+		--vscode-toolbar-activeBackground: #6c6f7050;
+		--vscode-toolbar-hoverBackground: #5a5d5e50;
+		--vscode-shadow-hover: 0 2px 8px #0000005c;
+	}
+}
+
+html,
+body {
+	height: 100%;
+	overflow: hidden;
+	width: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--vscode-editor-background);
+	color: var(--vscode-foreground);
+	font-family:
+		-apple-system,
+		BlinkMacSystemFont,
+		"Segoe WPC",
+		"Segoe UI",
+		"HelveticaNeue-Light",
+		system-ui,
+		"Ubuntu",
+		"Droid Sans",
+		sans-serif;
+	font-size: 13px;
+	line-height: 18px;
+}
+
+input,
+button {
+	font: inherit;
+}
+
+a {
+	color: inherit;
+}
+
+.page {
+	box-sizing: border-box;
+	display: grid;
+	height: 100%;
+	place-items: center;
+	padding: 24px;
+	width: 100%;
+}
+
+.stack {
+	width: min(100%, 368px);
+}
+
+h1 {
+	font-size: 20px;
+	font-weight: 600;
+	line-height: 26px;
+	margin: 0 0 22px;
+}
+
+p {
+	line-height: 20px;
+	margin: 0;
+}

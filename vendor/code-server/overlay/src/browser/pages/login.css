@@ -1,0 +1,160 @@
+.login-form {
+	display: grid;
+	justify-items: center;
+	width: min(100%, 420px);
+}
+
+.login-icon {
+	display: block;
+	height: clamp(88px, 16vw, 132px);
+	margin: 0 auto 6px;
+	width: clamp(88px, 16vw, 132px);
+}
+
+.auth-fields,
+.password-fields {
+	display: grid;
+	gap: 10px;
+	width: 100%;
+}
+
+.monaco-inputbox {
+	background-color: var(--vscode-input-background);
+	border: 1px solid var(--vscode-input-border, transparent);
+	border-radius: 12px;
+	box-sizing: border-box;
+	color: var(--vscode-input-foreground);
+	display: block;
+	font-size: inherit;
+	min-width: 0;
+	padding: 0;
+	position: relative;
+	transition:
+		border-color 120ms ease,
+		box-shadow 120ms ease;
+	width: 100%;
+}
+
+.monaco-inputbox.synthetic-focus {
+	border-color: var(--auth-input-focus);
+	box-shadow: 0 0 0 1px var(--auth-input-focus);
+}
+
+.monaco-inputbox > .ibwrapper {
+	border-radius: inherit;
+	position: relative;
+	width: 100%;
+}
+
+.monaco-inputbox > .ibwrapper > .input {
+	background-color: inherit;
+	border: none;
+	box-sizing: border-box;
+	color: inherit;
+	display: inline-block;
+	font-family: inherit;
+	font-size: inherit;
+	height: 100%;
+	line-height: inherit;
+	min-height: 50px;
+	padding: 14px 16px;
+	border-radius: inherit;
+	resize: none;
+	width: 100%;
+}
+
+.monaco-inputbox > .ibwrapper > input {
+	text-overflow: ellipsis;
+}
+
+.monaco-inputbox > .ibwrapper > .input:focus {
+	outline: none;
+}
+
+.submit-button {
+	appearance: none;
+	align-items: center;
+	background: var(--vscode-button-background);
+	border: 1px solid transparent;
+	border-radius: 12px;
+	box-sizing: border-box;
+	color: var(--vscode-button-foreground);
+	cursor: pointer;
+	display: inline-flex;
+	gap: 8px;
+	justify-content: center;
+	margin-top: 12px;
+	min-height: 50px;
+	padding: 0 18px;
+	text-align: center;
+	width: 100%;
+}
+
+.submit-button:hover {
+	background: var(--vscode-button-hoverBackground);
+}
+
+.submit-button:active {
+	transform: translateY(1px);
+}
+
+.submit-button:focus {
+	outline: 1px solid var(--vscode-focusBorder);
+	outline-offset: 2px;
+}
+
+.submit-button svg {
+	display: block;
+	flex: none;
+	height: 18px;
+	width: 18px;
+}
+
+.login-message {
+	align-items: center;
+	color: var(--vscode-errorForeground);
+	display: flex;
+	justify-content: center;
+	line-height: 20px;
+	margin-top: 8px;
+	min-height: 28px;
+	text-align: center;
+	width: 100%;
+}
+
+.login-message > .error {
+	color: var(--vscode-errorForeground);
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	justify-content: center;
+	width: 100%;
+}
+
+.login-message > .error::before {
+	content: "";
+	display: block;
+	flex: none;
+	height: 16px;
+	width: 16px;
+	background-color: currentColor;
+	-webkit-mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg' fill='currentColor'%3E%3Cpath d='M14.831 11.965L9.206 1.714C8.965 1.274 8.503 1 8 1C7.497 1 7.035 1.274 6.794 1.714L1.169 11.965C1.059 12.167 1 12.395 1 12.625C1 13.383 1.617 14 2.375 14H13.625C14.383 14 15 13.383 15 12.625C15 12.395 14.941 12.167 14.831 11.965ZM13.625 13H2.375C2.168 13 2 12.832 2 12.625C2 12.561 2.016 12.5 2.046 12.445L7.671 2.195C7.736 2.075 7.863 2 8 2C8.137 2 8.264 2.075 8.329 2.195L13.954 12.445C13.984 12.501 14 12.561 14 12.625C14 12.832 13.832 13 13.625 13ZM8.75 11.25C8.75 11.664 8.414 12 8 12C7.586 12 7.25 11.664 7.25 11.25C7.25 10.836 7.586 10.5 8 10.5C8.414 10.5 8.75 10.836 8.75 11.25ZM7.5 9V5.5C7.5 5.224 7.724 5 8 5C8.276 5 8.5 5.224 8.5 5.5V9C8.5 9.276 8.276 9.5 8 9.5C7.724 9.5 7.5 9.276 7.5 9Z'/%3E%3C/svg%3E");
+	mask-image: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' xmlns='http://www.w3.org/2000/svg' fill='currentColor'%3E%3Cpath d='M14.831 11.965L9.206 1.714C8.965 1.274 8.503 1 8 1C7.497 1 7.035 1.274 6.794 1.714L1.169 11.965C1.059 12.167 1 12.395 1 12.625C1 13.383 1.617 14 2.375 14H13.625C14.383 14 15 13.383 15 12.625C15 12.395 14.941 12.167 14.831 11.965ZM13.625 13H2.375C2.168 13 2 12.832 2 12.625C2 12.561 2.016 12.5 2.046 12.445L7.671 2.195C7.736 2.075 7.863 2 8 2C8.137 2 8.264 2.075 8.329 2.195L13.954 12.445C13.984 12.501 14 12.561 14 12.625C14 12.832 13.832 13 13.625 13ZM8.75 11.25C8.75 11.664 8.414 12 8 12C7.586 12 7.25 11.664 7.25 11.25C7.25 10.836 7.586 10.5 8 10.5C8.414 10.5 8.75 10.836 8.75 11.25ZM7.5 9V5.5C7.5 5.224 7.724 5 8 5C8.276 5 8.5 5.224 8.5 5.5V9C8.5 9.276 8.276 9.5 8 9.5C7.724 9.5 7.5 9.276 7.5 9Z'/%3E%3C/svg%3E");
+	-webkit-mask-repeat: no-repeat;
+	mask-repeat: no-repeat;
+}
+
+.username {
+	display: none;
+}
+
+.sr-only {
+	border: 0;
+	height: 1px;
+	margin: -1px;
+	overflow: hidden;
+	padding: 0;
+	position: absolute;
+	white-space: nowrap;
+	width: 1px;
+}

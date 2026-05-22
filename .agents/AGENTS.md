@@ -49,7 +49,7 @@ You're being judged strictly on results that benefit the project's future - not 
 # Repo-specific
 
 - Use `pnpm install <package>@latest` over editing package.json from memory.
-- Use `tmp/` for temporary scratch files and artifacts.
+- Use `tmp/` for temporary scratch files and artifacts, it's gitignored.
 
 ```json
 	"packageManager": "pnpm@11.0.9",
@@ -60,3 +60,7 @@ You're being judged strictly on results that benefit the project's future - not 
 		"fix": "node scripts/format.mjs --write && eslint . --fix"
 	},
 ```
+
+# Additional
+
+- Do not ever change git state (i.e. by staging changes) without first getting explicit permission from the user.

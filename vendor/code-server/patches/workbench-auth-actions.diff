@@ -1,0 +1,149 @@
+diff --git a/lib/vscode/src/vs/base/common/product.ts b/lib/vscode/src/vs/base/common/product.ts
+index bc64cb5..c927f86 100644
+--- a/lib/vscode/src/vs/base/common/product.ts
++++ b/lib/vscode/src/vs/base/common/product.ts
+@@ -69,6 +69,7 @@ export interface IProductConfiguration {
+ 	readonly rootEndpoint?: string
+ 	readonly updateEndpoint?: string
+ 	readonly logoutEndpoint?: string
++	readonly resetPasswordEndpoint?: string
+ 	readonly proxyEndpointTemplate?: string
+ 	readonly serviceWorker?: {
+ 		readonly path: string;
+diff --git a/lib/vscode/src/vs/server/node/serverEnvironmentService.ts b/lib/vscode/src/vs/server/node/serverEnvironmentService.ts
+index f69788f..504586a 100644
+--- a/lib/vscode/src/vs/server/node/serverEnvironmentService.ts
++++ b/lib/vscode/src/vs/server/node/serverEnvironmentService.ts
+@@ -19,6 +19,7 @@ export const serverOptions: OptionDescriptions<Required<ServerParsedArgs>> = {
+ 	/* ----- code-server ----- */
+ 	'disable-update-check': { type: 'boolean' },
+ 	'auth': { type: 'string' },
++	'reset-password': { type: 'boolean' },
+ 	'disable-file-downloads': { type: 'boolean' },
+ 	'disable-file-uploads': { type: 'boolean' },
+ 	'disable-getting-started-override': { type: 'boolean' },
+@@ -115,6 +116,7 @@ export interface ServerParsedArgs {
+ 	/* ----- code-server ----- */
+ 	'disable-update-check'?: boolean;
+ 	'auth'?: string;
++	'reset-password'?: boolean;
+ 	'disable-file-downloads'?: boolean;
+ 	'disable-file-uploads'?: boolean;
+ 	'disable-getting-started-override'?: boolean,
+diff --git a/lib/vscode/src/vs/server/node/webClientServer.ts b/lib/vscode/src/vs/server/node/webClientServer.ts
+index 96790a8..1ae3af8 100644
+--- a/lib/vscode/src/vs/server/node/webClientServer.ts
++++ b/lib/vscode/src/vs/server/node/webClientServer.ts
+@@ -371,6 +371,7 @@ export class WebClientServer {
+ 			rootEndpoint: rootBase,
+ 			updateEndpoint: !this._environmentService.args['disable-update-check'] ? rootBase + '/update/check' : undefined,
+ 			logoutEndpoint: this._environmentService.args['auth'] && this._environmentService.args['auth'] !== "none" ? rootBase + '/logout' : undefined,
++			resetPasswordEndpoint: this._environmentService.args['reset-password'] ? rootBase + '/reset-password' : undefined,
+ 			proxyEndpointTemplate: process.env.VSCODE_PROXY_URI ?? rootBase + '/proxy/{{port}}/',
+ 			serviceWorker: {
+ 				scope: vscodeBase + '/',
+diff --git a/lib/vscode/src/vs/workbench/browser/client.ts b/lib/vscode/src/vs/workbench/browser/client.ts
+index 7948a7b..12989e4 100644
+--- a/lib/vscode/src/vs/workbench/browser/client.ts
++++ b/lib/vscode/src/vs/workbench/browser/client.ts
+@@ -9,6 +9,7 @@ import { IStorageService, StorageScope, StorageTarget } from '../../platform/sto
+ 
+ export class CodeServerClient extends Disposable {
+ 	static LOGOUT_COMMAND_ID = 'code-server.logout';
++	static RESET_PASSWORD_COMMAND_ID = 'code-server.resetPassword';
+ 
+ 	constructor (
+ 		@ILogService private logService: ILogService,
+@@ -90,6 +91,10 @@ export class CodeServerClient extends Disposable {
+ 			this.addLogoutCommand(this.productService.logoutEndpoint);
+ 		}
+ 
++		if (this.productService.resetPasswordEndpoint) {
++			this.addResetPasswordCommand(this.productService.resetPasswordEndpoint);
++		}
++
+ 		if (this.productService.serviceWorker) {
+ 			await this.registerServiceWorker(this.productService.serviceWorker);
+ 		}
+@@ -145,22 +150,44 @@ export class CodeServerClient extends Disposable {
+ 		updateLoop();
+ 	}
+ 
++	private openAuthEndpoint(endpoint: string) {
++		const targetWindow = window.top || window;
++		const authUrl = new URL(endpoint, targetWindow.location.href);
++		authUrl.searchParams.set('base', this.productService.rootEndpoint || '.');
++		authUrl.searchParams.set('href', targetWindow.location.href);
++		const skipBeforeUnload = (event: BeforeUnloadEvent) => event.stopImmediatePropagation();
++		window.addEventListener('beforeunload', skipBeforeUnload, { capture: true });
++		targetWindow.addEventListener('beforeunload', skipBeforeUnload, { capture: true });
++		window.setTimeout(() => window.removeEventListener('beforeunload', skipBeforeUnload, true), 10000);
++		targetWindow.setTimeout(() => targetWindow.removeEventListener('beforeunload', skipBeforeUnload, true), 10000);
++		targetWindow.location.assign(authUrl);
++	}
++
++	private addResetPasswordCommand(resetPasswordEndpoint: string) {
++		CommandsRegistry.registerCommand(CodeServerClient.RESET_PASSWORD_COMMAND_ID, () => {
++			this.openAuthEndpoint(resetPasswordEndpoint);
++		});
++
++		for (const menuId of [MenuId.CommandPalette, MenuId.MenubarHomeMenu]) {
++			MenuRegistry.appendMenuItem(menuId, {
++				command: {
++					id: CodeServerClient.RESET_PASSWORD_COMMAND_ID,
++					title: localize('resetPassword', "Reset Password"),
++				},
++			});
++		}
++	}
++
+ 	private addLogoutCommand(logoutEndpoint: string) {
+ 		CommandsRegistry.registerCommand(CodeServerClient.LOGOUT_COMMAND_ID, () => {
+-			const logoutUrl = new URL(logoutEndpoint, window.location.href);
+-			// Cookies must be set with absolute paths and must use the same path to
+-			// be unset (we set it on the root) so send the relative root and the
+-			// current href so the backend can derive the absolute path to the root.
+-			logoutUrl.searchParams.set('base', this.productService.rootEndpoint || ".");
+-			logoutUrl.searchParams.set('href', window.location.href);
+-			window.location.assign(logoutUrl);
++			this.openAuthEndpoint(logoutEndpoint);
+ 		});
+ 
+ 		for (const menuId of [MenuId.CommandPalette, MenuId.MenubarHomeMenu]) {
+ 			MenuRegistry.appendMenuItem(menuId, {
+ 				command: {
+ 					id: CodeServerClient.LOGOUT_COMMAND_ID,
+-					title: localize('logout', "Sign out of {0}", 'code-server'),
++					title: localize('logout', "Sign Out"),
+ 				},
+ 			});
+ 		}
+diff --git a/src/node/cli.ts b/src/node/cli.ts
+index 77eb725..31100c4 100644
+--- a/src/node/cli.ts
++++ b/src/node/cli.ts
+@@ -58,6 +58,7 @@ export interface UserProvidedCodeArgs {
+   "link-protection-trusted-domains"?: string[]
+   // locale is used by both VS Code and code-server.
+   locale?: string
++  "reset-password"?: boolean
+ }
+ 
+ /**
+@@ -173,6 +174,9 @@ export const options: Options<Required<UserProvidedArgs>> = {
+   "session-socket": {
+     type: "string",
+   },
++  "reset-password": {
++    type: "boolean",
++  },
+   "cookie-suffix": {
+     type: "string",
+     description:
+@@ -919,5 +920,6 @@ export const toCodeArgs = async (args: DefaultedArgs): Promise<CodeArgs> => {
+     version: !!args.version,
+     port: args.port?.toString(),
+     log: args.log ? [args.log] : undefined,
++    "reset-password": args.auth === AuthType.Password && !args.usingEnvPassword && !args.usingEnvHashedPassword,
+   }
+ }

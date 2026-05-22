@@ -233,9 +233,9 @@ Make it easy for future agents to run the Rust test suite in a Linux environment
 
 1. Add a documented local Linux test command.
 2. If useful, add a Docker-based test target that runs:
-   - `cargo fmt --manifest-path packages/persistd/Cargo.toml --check`
-   - `cargo clippy --manifest-path packages/persistd/Cargo.toml --all-targets --all-features -- -D warnings`
-   - `cargo test --manifest-path packages/persistd/Cargo.toml --all-targets --all-features`
+   - `cargo fmt --manifest-path packages/persistd/Cargo.toml --check`.
+   - `cargo clippy --manifest-path packages/persistd/Cargo.toml --all-targets --all-features -- -D warnings`.
+   - `cargo test --manifest-path packages/persistd/Cargo.toml --all-targets --all-features`.
 3. Do not try to make `inotify` compile on native Windows unless requested.
 4. Verify CI still runs Rust checks on Ubuntu.
 
@@ -252,9 +252,9 @@ No new product tests required in this slice.
 
 ### PLAN.md References
 
-- `PLAN.md` section 8: `persistd apply`
-- `PLAN.md` section 15: Baseline
-- `PLAN.md` section 51: Acceptance Criteria
+- `PLAN.md` section 8: `persistd apply`.
+- `PLAN.md` section 15: Baseline.
+- `PLAN.md` section 51: Acceptance Criteria.
 
 ### Current Drift
 
@@ -318,10 +318,10 @@ Add integration tests, preferably under `packages/persistd/tests/`, for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 5: Public Truth
-- `PLAN.md` section 22: Public Path Mapping
-- `PLAN.md` section 46: Path tests
-- `PLAN.md` section 50: Grill Triggers
+- `PLAN.md` section 5: Public Truth.
+- `PLAN.md` section 22: Public Path Mapping.
+- `PLAN.md` section 46: Path tests.
+- `PLAN.md` section 50: Grill Triggers.
 
 ### Current Drift
 
@@ -394,9 +394,9 @@ Add path tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 15: Baseline
-- `PLAN.md` section 16: Baseline Record Fields
-- `PLAN.md` section 19: Gated Comparison
+- `PLAN.md` section 15: Baseline.
+- `PLAN.md` section 16: Baseline Record Fields.
+- `PLAN.md` section 19: Gated Comparison.
 
 ### Current Drift
 
@@ -469,9 +469,9 @@ Each permission-dependent test must skip only when the kernel/container lacks th
 
 ### PLAN.md References
 
-- `PLAN.md` section 3: Hard Requirements
-- `PLAN.md` section 8: Apply and daemon steps
-- `PLAN.md` section 28: Platform Capability Policy
+- `PLAN.md` section 3: Hard Requirements.
+- `PLAN.md` section 8: Apply and daemon steps.
+- `PLAN.md` section 28: Platform Capability Policy.
 
 ### Current Drift
 
@@ -531,9 +531,9 @@ Add tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 5: Public Truth
-- `PLAN.md` section 23: Metadata
-- `PLAN.md` section 51: Acceptance Criteria
+- `PLAN.md` section 5: Public Truth.
+- `PLAN.md` section 23: Metadata.
+- `PLAN.md` section 51: Acceptance Criteria.
 
 ### Current Drift
 
@@ -546,8 +546,8 @@ Add tests for:
 - [`packages/persistd/src/metadata.rs`](packages/persistd/src/metadata.rs)
 - [`packages/persistd/src/update.rs`](packages/persistd/src/update.rs)
 - [`packages/persistd/src/apply.rs`](packages/persistd/src/apply.rs)
-- New or expanded `public.rs`
-- New `rootfs.rs`
+- New or expanded `public.rs`.
+- New `rootfs.rs`.
 
 ### Decision Required
 
@@ -594,11 +594,11 @@ Add tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 3: Hard Requirements
-- `PLAN.md` section 20: Delta Decisions
-- `PLAN.md` section 25: Apply Rules
-- `PLAN.md` section 29: Special File Policy
-- `PLAN.md` section 30: Sparse Files
+- `PLAN.md` section 3: Hard Requirements.
+- `PLAN.md` section 20: Delta Decisions.
+- `PLAN.md` section 25: Apply Rules.
+- `PLAN.md` section 29: Special File Policy.
+- `PLAN.md` section 30: Sparse Files.
 
 ### Current Drift
 
@@ -665,9 +665,9 @@ Add rootfs behavior tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 17: Definition Of Change
-- `PLAN.md` section 18: Compare-First Update Pipeline
-- `PLAN.md` section 19: Gated Comparison
+- `PLAN.md` section 17: Definition Of Change.
+- `PLAN.md` section 18: Compare-First Update Pipeline.
+- `PLAN.md` section 19: Gated Comparison.
 
 ### Current Drift
 
@@ -688,8 +688,8 @@ It hashes regular files whenever size/mode/uid/gid match, which is correct but m
 
 - [`packages/persistd/src/update.rs`](packages/persistd/src/update.rs)
 - [`packages/persistd/src/baseline.rs`](packages/persistd/src/baseline.rs)
-- New `rootfs.rs`
-- New `capabilities.rs`
+- New `rootfs.rs`.
+- New `capabilities.rs`.
 
 ### Tests First
 
@@ -727,10 +727,10 @@ Add compare tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 9: Single Writer Rule
-- `PLAN.md` section 10: Locking
-- `PLAN.md` section 18: Compare-First Update Pipeline
-- `PLAN.md` section 39: Module Boundaries
+- `PLAN.md` section 9: Single Writer Rule.
+- `PLAN.md` section 10: Locking.
+- `PLAN.md` section 18: Compare-First Update Pipeline.
+- `PLAN.md` section 39: Module Boundaries.
 
 ### Current Drift
 
@@ -799,10 +799,10 @@ Add daemon tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 8: Daemon
-- `PLAN.md` section 12: Readiness
-- `PLAN.md` section 26: Watcher
-- `PLAN.md` section 27: Rolling Audit
+- `PLAN.md` section 8: Daemon.
+- `PLAN.md` section 12: Readiness.
+- `PLAN.md` section 26: Watcher.
+- `PLAN.md` section 27: Rolling Audit.
 
 ### Current Drift
 
@@ -851,8 +851,8 @@ Add tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 12: Readiness
-- `PLAN.md` section 44: code-server Readiness Patch
+- `PLAN.md` section 12: Readiness.
+- `PLAN.md` section 44: code-server Readiness Patch.
 
 ### Current Drift
 
@@ -900,9 +900,9 @@ Add tests/smoke checks for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 8: `persistd doctor`
-- `PLAN.md` section 23: Metadata
-- `PLAN.md` section 46: Required Test Areas
+- `PLAN.md` section 8: `persistd doctor`.
+- `PLAN.md` section 23: Metadata.
+- `PLAN.md` section 46: Required Test Areas.
 
 ### Current Drift
 
@@ -919,8 +919,8 @@ It may race until single writer is fixed.
 - [`packages/persistd/src/doctor.rs`](packages/persistd/src/doctor.rs)
 - [`packages/persistd/src/daemon.rs`](packages/persistd/src/daemon.rs)
 - [`packages/persistd/src/internal.rs`](packages/persistd/src/internal.rs)
-- New/expanded `public.rs`
-- New `capabilities.rs`
+- New/expanded `public.rs`.
+- New `capabilities.rs`.
 
 ### Tests First
 
@@ -955,9 +955,9 @@ Add doctor tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 8: `persistd prune`
-- `PLAN.md` section 20: Delta Decisions
-- `PLAN.md` section 50: Grill Triggers
+- `PLAN.md` section 8: `persistd prune`.
+- `PLAN.md` section 20: Delta Decisions.
+- `PLAN.md` section 50: Grill Triggers.
 
 ### Current Drift
 
@@ -968,7 +968,7 @@ Prune is a no-op.
 - [`packages/persistd/src/prune.rs`](packages/persistd/src/prune.rs)
 - [`packages/persistd/src/daemon.rs`](packages/persistd/src/daemon.rs)
 - [`packages/persistd/src/update.rs`](packages/persistd/src/update.rs)
-- New/expanded `public.rs`
+- New/expanded `public.rs`.
 
 ### Decision Required
 
@@ -1012,9 +1012,9 @@ Add prune tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 25: Apply Rules
-- `PLAN.md` section 29: Special File Policy
-- `PLAN.md` section 30: Sparse Files
+- `PLAN.md` section 25: Apply Rules.
+- `PLAN.md` section 29: Special File Policy.
+- `PLAN.md` section 30: Sparse Files.
 
 ### Current Drift
 
@@ -1027,9 +1027,9 @@ It does not apply xattrs, ACLs, capabilities, hardlinks, FIFOs, devices, sparse 
 ### Files
 
 - [`packages/persistd/src/apply.rs`](packages/persistd/src/apply.rs)
-- New `rootfs.rs`
+- New `rootfs.rs`.
 - [`packages/persistd/src/metadata.rs`](packages/persistd/src/metadata.rs)
-- New/expanded `public.rs`
+- New/expanded `public.rs`.
 
 ### Tests First
 
@@ -1065,8 +1065,8 @@ Add apply tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 8: `persistd status`
-- `PLAN.md` section 12: Readiness
+- `PLAN.md` section 8: `persistd status`.
+- `PLAN.md` section 12: Readiness.
 
 ### Current Drift
 
@@ -1085,7 +1085,7 @@ Status currently reports:
 - [`packages/persistd/src/status.rs`](packages/persistd/src/status.rs)
 - [`packages/persistd/src/daemon.rs`](packages/persistd/src/daemon.rs)
 - [`packages/persistd/src/internal.rs`](packages/persistd/src/internal.rs)
-- New `capabilities.rs`
+- New `capabilities.rs`.
 
 ### Tests First
 
@@ -1120,8 +1120,8 @@ Add status tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 21: Atomicity
-- `PLAN.md` section 46: Crash tests
+- `PLAN.md` section 21: Atomicity.
+- `PLAN.md` section 46: Crash tests.
 
 ### Current Drift
 
@@ -1139,8 +1139,8 @@ Missing or incomplete:
 
 ### Files
 
-- New `rootfs.rs`
-- New/expanded `public.rs`
+- New `rootfs.rs`.
+- New/expanded `public.rs`.
 - [`packages/persistd/src/metadata.rs`](packages/persistd/src/metadata.rs)
 - [`packages/persistd/src/update.rs`](packages/persistd/src/update.rs)
 - [`packages/persistd/src/apply.rs`](packages/persistd/src/apply.rs)
@@ -1177,8 +1177,8 @@ Add tests for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 47: Smoke Tests
-- `PLAN.md` section 51: Acceptance Criteria
+- `PLAN.md` section 47: Smoke Tests.
+- `PLAN.md` section 51: Acceptance Criteria.
 
 ### Current Drift
 
@@ -1226,8 +1226,8 @@ Add smoke coverage for:
 
 ### PLAN.md References
 
-- `PLAN.md` section 42: Dockerfile Changes
-- `PLAN.md` section 43: Supervisor And Entrypoint
+- `PLAN.md` section 42: Dockerfile Changes.
+- `PLAN.md` section 43: Supervisor And Entrypoint.
 
 ### Current Drift
 

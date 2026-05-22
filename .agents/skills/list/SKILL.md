@@ -125,12 +125,33 @@ vendor/
                     workbench-mobile.js
       src/
         browser/
+          media/
+            favicon-dark-support.svg
+            favicon.ico
+            favicon.svg
+            pwa-icon-192.png
+            pwa-icon-512.png
+            pwa-icon-maskable-192.png
+            pwa-icon-maskable-512.png
+            templates.png
           pages/
+            auth.js
+            error.css
+            error.html
+            global.css
+            login.css
             login.html
+            register.html
+            reset-password.html
     patches/
-      0001-gate-code-server-on-persistd-readiness.patch
-      0002-load-workbench-mobile.patch
-      0003-log-agentbox-access-url.patch
+      auth-flow.diff
+      browser-friendly-url.diff
+      no-generated-password.diff
+      persistd-readiness.diff
+      series
+      workbench-auth-actions.diff
+      workbench-cache.diff
+      workbench-mobile.diff
     README.md
 .dockerignore
 .editorconfig
@@ -143,6 +164,7 @@ Dockerfile
 eslint.config.mjs
 LICENSE
 package.json
+PLAN_2.md
 PLAN.md
 pnpm-lock.yaml
 renovate.json

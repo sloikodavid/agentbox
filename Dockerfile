@@ -1,60 +1,69 @@
-FROM node:26.1.0-trixie-slim@sha256:424cafd2a035ed2b2d74acc3142b68b426fb62a47742c80a75e7117db02d6b30 AS code-server-installer
+# Build patched code-server from source.
+FROM node:22-trixie-slim@sha256:e637ac91fb4f2f40761d217c5d48c41a05edf0b65eb9c34e72c27cce55af9e65 AS code-server-builder
 
 # renovate: datasource=custom.code-server-tags depName=coder/code-server versioning=semver
 ARG CODE_SERVER_VERSION=4.118.0
 ARG CODE_SERVER_COMMIT=871f1d904834ee78db1c4585e2f14f65c119374a
-ARG CODE_SERVER_DOWNLOAD_BASE=https://github.com/coder/code-server/releases/download
-# renovate: datasource=custom.code-server-linux-amd64 depName=code-server-linux-amd64 versioning=semver
-# code-server-linux-amd64 version=4.118.0
-ARG CODE_SERVER_SHA256_AMD64=ab4dee01cacc20eb500c96660477d8ba755f69f402cc9cbab3a8496b4690f2fd
-# renovate: datasource=custom.code-server-linux-arm64 depName=code-server-linux-arm64 versioning=semver
-# code-server-linux-arm64 version=4.118.0
-ARG CODE_SERVER_SHA256_ARM64=70dd29a9bffa1ca7a9578e24106e612ee041192bf6aa5ece964b1af1e3d27c08
-ARG TARGETARCH
-
-# renovate: suite=trixie depName=ca-certificates
-ARG CODE_SERVER_INSTALLER_CA_CERTIFICATES_VERSION=20250419
-# renovate: suite=trixie depName=curl
-ARG CODE_SERVER_INSTALLER_CURL_VERSION=8.14.1-2+deb13u2
-# renovate: suite=trixie depName=patch
-ARG CODE_SERVER_INSTALLER_PATCH_VERSION=2.8-2
+ARG CODE_SERVER_REPOSITORY=https://github.com/coder/code-server.git
 
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ca-certificates="${CODE_SERVER_INSTALLER_CA_CERTIFICATES_VERSION}" \
-    curl="${CODE_SERVER_INSTALLER_CURL_VERSION}" \
-    patch="${CODE_SERVER_INSTALLER_PATCH_VERSION}" \
+    build-essential \
+    ca-certificates \
+    git \
+    git-lfs \
+    jq \
+    libkrb5-dev \
+    libsecret-1-dev \
+    libx11-dev \
+    libxkbfile-dev \
+    patch \
+    pkg-config \
+    python-is-python3 \
+    quilt \
+    rsync \
+    unzip \
   && rm -rf /var/lib/apt/lists/*
 
-RUN case "${TARGETARCH}" in \
-    amd64) code_server_arch="amd64"; code_server_sha256="${CODE_SERVER_SHA256_AMD64}" ;; \
-    arm64) code_server_arch="arm64"; code_server_sha256="${CODE_SERVER_SHA256_ARM64}" ;; \
-    *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
-  esac \
-  && curl -fsSL \
-    -o /tmp/code-server.tar.gz \
-    "${CODE_SERVER_DOWNLOAD_BASE}/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-linux-${code_server_arch}.tar.gz" \
-  && printf '%s  %s\n' "${code_server_sha256}" /tmp/code-server.tar.gz | sha256sum -c - \
-  && mkdir -p /opt/code-server/current \
-  && tar -xzf /tmp/code-server.tar.gz --strip-components=1 -C /opt/code-server/current \
-  && XDG_CONFIG_HOME=/tmp/code-server-config /opt/code-server/current/bin/code-server --version --json > /tmp/code-server.version.json \
+WORKDIR /src/code-server
+
+# Fetch code-server and VS Code.
+RUN git clone --branch "v${CODE_SERVER_VERSION}" --depth 1 "${CODE_SERVER_REPOSITORY}" . \
+  && test "$(git rev-parse HEAD)" = "${CODE_SERVER_COMMIT}" \
+  && git submodule update --init --depth 1
+
+# Install dependencies before local diffs so patch-only changes keep this layer cached.
+RUN npm ci
+
+# Add local code-server source diffs before building the standalone release.
+COPY vendor/code-server/patches/ /tmp/code-server-patches/
+RUN while IFS= read -r patch_name || [ -n "${patch_name}" ]; do \
+    case "${patch_name}" in ""|\#*) continue ;; esac; \
+    cp "/tmp/code-server-patches/${patch_name}" "patches/${patch_name}"; \
+    printf '%s\n' "${patch_name}" >> patches/series; \
+  done < /tmp/code-server-patches/series \
+  && quilt push -a \
+  && rm -rf /tmp/code-server-patches
+
+# Build the standalone release.
+RUN npm run build \
+  && VERSION="${CODE_SERVER_VERSION}" npm run build:vscode \
+  && KEEP_MODULES=1 npm run release
+
+# Overlay Agentbox browser assets onto the built release.
+COPY vendor/code-server/overlay/ /src/code-server/release/
+RUN XDG_CONFIG_HOME=/tmp/code-server-config /src/code-server/release/bin/code-server --version --json > /tmp/code-server.version.json \
   && node -e 'const fs = require("node:fs"); const line = fs.readFileSync("/tmp/code-server.version.json", "utf8").split(/\n/).find((entry) => entry.trim().startsWith("{")); if (!line) { throw new Error("code-server version JSON was not found"); } const actual = JSON.parse(line); if (actual.codeServer !== process.argv[1] || actual.commit !== process.argv[2]) { throw new Error(`code-server version mismatch: ${JSON.stringify(actual)}`); }' \
     "${CODE_SERVER_VERSION}" \
     "${CODE_SERVER_COMMIT}" \
-  && printf 'version=%s\ncommit=%s\narch=%s\nsha256=%s\n' \
+  && printf 'version=%s\ncommit=%s\nsource=%s\n' \
     "${CODE_SERVER_VERSION}" \
     "${CODE_SERVER_COMMIT}" \
-    "${code_server_arch}" \
-    "${code_server_sha256}" \
-    > /opt/code-server/current/.agentbox-upstream \
-  && rm -rf /tmp/code-server.tar.gz /tmp/code-server.version.json /tmp/code-server-config
+    "${CODE_SERVER_REPOSITORY}" \
+    > /src/code-server/release/.agentbox-upstream \
+  && rm -rf /tmp/code-server.version.json /tmp/code-server-config
 
-COPY vendor/code-server/overlay/ /opt/code-server/current/
-COPY vendor/code-server/patches/ /tmp/code-server-patches/
-RUN if find /tmp/code-server-patches -name '*.patch' -print -quit | grep -q .; then \
-    for patch_file in /tmp/code-server-patches/*.patch; do patch -d /opt/code-server/current -p1 < "${patch_file}" || exit 1; done; \
-  fi
-
+# Build persistd.
 FROM rust:1.95.0-trixie AS persistd-builder
 
 WORKDIR /src
@@ -66,6 +75,7 @@ RUN cargo build --release --locked --manifest-path packages/persistd/Cargo.toml 
   && cp packages/persistd/target/release/persistd /out/persistd \
   && cp packages/persistd/target/release/persistd-baseline /out/persistd-baseline
 
+# Assemble the runtime image.
 FROM node:26.1.0-trixie-slim@sha256:424cafd2a035ed2b2d74acc3142b68b426fb62a47742c80a75e7117db02d6b30 AS runtime
 
 ARG AGENTBOX_BUILD_VERSION=unknown
@@ -79,62 +89,10 @@ LABEL org.opencontainers.image.title="Agentbox" \
   org.opencontainers.image.version="${AGENTBOX_BUILD_VERSION}" \
   org.opencontainers.image.licenses="Apache-2.0"
 
-# renovate: suite=trixie depName=bash
-ARG BASH_VERSION=5.2.37-2+b8
 # renovate: datasource=npm depName=bun
 ARG BUN_VERSION=1.3.13
-# renovate: suite=trixie depName=ca-certificates
-ARG CA_CERTIFICATES_VERSION=20250419
-# renovate: suite=trixie depName=curl
-ARG CURL_VERSION=8.14.1-2+deb13u2
-# renovate: suite=trixie depName=desktop-file-utils
-ARG DESKTOP_FILE_UTILS_VERSION=0.28-1
-# renovate: suite=trixie depName=git
-ARG GIT_VERSION=1:2.47.3-0+deb13u1
-# renovate: suite=trixie depName=jq
-ARG JQ_VERSION=1.7.1-6+deb13u1
-# renovate: suite=trixie depName=less
-ARG LESS_VERSION=668-1
-# renovate: suite=trixie depName=libfile-mimeinfo-perl
-ARG LIBFILE_MIMEINFO_PERL_VERSION=0.35-1
-# renovate: suite=trixie depName=mailcap
-ARG MAILCAP_VERSION=3.74
-# renovate: suite=trixie depName=nano
-ARG NANO_VERSION=8.4-1
-# renovate: suite=trixie depName=openssh-client
-ARG OPENSSH_CLIENT_VERSION=1:10.0p1-7+deb13u2
-# renovate: suite=trixie depName=procps
-ARG PROCPS_VERSION=2:4.0.4-9
-# renovate: suite=trixie depName=python3
-ARG PYTHON3_VERSION=3.13.5-1
 # renovate: datasource=npm depName=pnpm
 ARG PNPM_VERSION=11.0.9
-# renovate: suite=trixie depName=ripgrep
-ARG RIPGREP_VERSION=14.1.1-1+b4
-# renovate: suite=trixie depName=rsync
-ARG RSYNC_VERSION=3.4.1+ds1-5+deb13u1
-# renovate: suite=trixie depName=shared-mime-info
-ARG SHARED_MIME_INFO_VERSION=2.4-5+b2
-# renovate: suite=trixie depName=sudo
-ARG SUDO_VERSION=1.9.16p2-3+deb13u1
-# renovate: suite=trixie depName=supervisor
-ARG SUPERVISOR_VERSION=4.2.5-3
-# renovate: suite=trixie depName=tar
-ARG TAR_VERSION=1.35+dfsg-3.1
-# renovate: suite=trixie depName=unzip
-ARG UNZIP_VERSION=6.0-29
-# renovate: suite=trixie depName=vim-tiny
-ARG VIM_TINY_VERSION=2:9.1.1230-2
-# renovate: suite=trixie depName=wget
-ARG WGET_VERSION=1.25.0-2
-# renovate: suite=trixie depName=xdg-user-dirs
-ARG XDG_USER_DIRS_VERSION=0.18-2
-# renovate: suite=trixie depName=xdg-utils
-ARG XDG_UTILS_VERSION=1.2.1-2
-# renovate: suite=trixie depName=xz-utils
-ARG XZ_UTILS_VERSION=5.8.1-1
-# renovate: suite=trixie depName=zip
-ARG ZIP_VERSION=3.0-15
 
 ENV AGENTBOX_BUILD_VERSION="${AGENTBOX_BUILD_VERSION}" \
   AGENTBOX_BUILD_REVISION="${AGENTBOX_BUILD_REVISION}" \
@@ -148,32 +106,32 @@ ENV AGENTBOX_BUILD_VERSION="${AGENTBOX_BUILD_VERSION}" \
 
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    bash="${BASH_VERSION}" \
-    ca-certificates="${CA_CERTIFICATES_VERSION}" \
-    curl="${CURL_VERSION}" \
-    desktop-file-utils="${DESKTOP_FILE_UTILS_VERSION}" \
-    git="${GIT_VERSION}" \
-    jq="${JQ_VERSION}" \
-    less="${LESS_VERSION}" \
-    libfile-mimeinfo-perl="${LIBFILE_MIMEINFO_PERL_VERSION}" \
-    mailcap="${MAILCAP_VERSION}" \
-    nano="${NANO_VERSION}" \
-    openssh-client="${OPENSSH_CLIENT_VERSION}" \
-    procps="${PROCPS_VERSION}" \
-    python3="${PYTHON3_VERSION}" \
-    ripgrep="${RIPGREP_VERSION}" \
-    rsync="${RSYNC_VERSION}" \
-    shared-mime-info="${SHARED_MIME_INFO_VERSION}" \
-    sudo="${SUDO_VERSION}" \
-    supervisor="${SUPERVISOR_VERSION}" \
-    tar="${TAR_VERSION}" \
-    unzip="${UNZIP_VERSION}" \
-    vim-tiny="${VIM_TINY_VERSION}" \
-    wget="${WGET_VERSION}" \
-    xdg-user-dirs="${XDG_USER_DIRS_VERSION}" \
-    xdg-utils="${XDG_UTILS_VERSION}" \
-    xz-utils="${XZ_UTILS_VERSION}" \
-    zip="${ZIP_VERSION}" \
+    bash \
+    ca-certificates \
+    curl \
+    desktop-file-utils \
+    git \
+    jq \
+    less \
+    libfile-mimeinfo-perl \
+    mailcap \
+    nano \
+    openssh-client \
+    procps \
+    python3 \
+    ripgrep \
+    rsync \
+    shared-mime-info \
+    sudo \
+    supervisor \
+    tar \
+    unzip \
+    vim-tiny \
+    wget \
+    xdg-user-dirs \
+    xdg-utils \
+    xz-utils \
+    zip \
   && rm -rf /var/lib/apt/lists/*
 
 RUN npm install --global \
@@ -185,7 +143,7 @@ RUN groupmod --new-name user node \
   && usermod --login user --home /home/user --move-home node \
   && mkdir -p /home/user
 
-COPY --from=code-server-installer /opt/code-server/current /opt/code-server/current
+COPY --from=code-server-builder /src/code-server/release /opt/code-server/current
 COPY --from=persistd-builder /out/persistd /opt/persistd/bin/persistd
 COPY --from=persistd-builder /out/persistd-baseline /opt/persistd/bin/persistd-baseline
 COPY rootfs/ /

@@ -1,0 +1,509 @@
+diff --git a/src/node/cli.ts b/src/node/cli.ts
+index ac4ee32f..e3ed6588 100644
+--- a/src/node/cli.ts
++++ b/src/node/cli.ts
+@@ -2,7 +2,7 @@ import { field, Level, logger } from "@coder/logger"
+ import { promises as fs } from "fs"
+ import { load } from "js-yaml"
+ import * as path from "path"
+-import { generateCertificate, generatePassword, paths, splitOnFirstEquals } from "./util"
++import { generateCertificate, paths, splitOnFirstEquals } from "./util"
+ import { EditorSessionManagerClient } from "./vscodeSocket"
+ 
+ export enum Feature {
+@@ -611,6 +611,7 @@ export async function setDefaults(cliArgs: UserProvidedArgs, configArgs?: Config
+   let usingEnvPassword = !!process.env.PASSWORD
+   if (process.env.PASSWORD) {
+     args.password = process.env.PASSWORD
++    args["hashed-password"] = undefined
+   }
+ 
+   if (process.env.CS_DISABLE_FILE_DOWNLOADS?.match(/^(1|true)$/)) {
+@@ -628,6 +629,7 @@ export async function setDefaults(cliArgs: UserProvidedArgs, configArgs?: Config
+   const usingEnvHashedPassword = !!process.env.HASHED_PASSWORD
+   if (process.env.HASHED_PASSWORD) {
+     args["hashed-password"] = process.env.HASHED_PASSWORD
++    args.password = undefined
+     usingEnvPassword = false
+   }
+ 
+diff --git a/src/node/http.ts b/src/node/http.ts
+index 1429b09a..72eda67a 100644
+--- a/src/node/http.ts
++++ b/src/node/http.ts
+@@ -122,6 +122,9 @@ export const authenticated = async (req: express.Request): Promise<boolean> => {
+     case AuthType.Password: {
+       // The password is stored in the cookie after being hashed.
+       const hashedPasswordFromArgs = req.args["hashed-password"]
++      if (!req.args.password && !hashedPasswordFromArgs) {
++        return false
++      }
+       const passwordMethod = getPasswordMethod(hashedPasswordFromArgs)
+       const isCookieValidArgs: IsCookieValidArgs = {
+         passwordMethod,
+diff --git a/src/node/main.ts b/src/node/main.ts
+index c2d3bd57..14c80bb3 100644
+--- a/src/node/main.ts
++++ b/src/node/main.ts
+@@ -133,12 +133,6 @@ export const runCodeServer = async (
+   logger.info(`Using user-data-dir ${args["user-data-dir"]}`)
+   logger.debug(`Using extensions-dir ${args["extensions-dir"]}`)
+ 
+-  if (args.auth === AuthType.Password && !args.password && !args["hashed-password"]) {
+-    throw new Error(
+-      "Please pass in a password via the config file or environment variable ($PASSWORD or $HASHED_PASSWORD)",
+-    )
+-  }
+-
+   const app = await createApp(args)
+   const protocol = args.cert ? "https" : "http"
+   const serverAddress = ensureAddress(app.server, protocol)
+@@ -152,6 +146,8 @@ export const runCodeServer = async (
+       logger.info("    - Using password from $PASSWORD")
+     } else if (args.usingEnvHashedPassword) {
+       logger.info("    - Using password from $HASHED_PASSWORD")
++    } else if (!args.password && !args["hashed-password"]) {
++      logger.info("    - No password configured yet")
+     } else if (args["hashed-password"]) {
+       logger.info(`    - Using hashed-password from ${args.config}`)
+     } else {
+diff --git a/src/node/routes/index.ts b/src/node/routes/index.ts
+index 78e30566..c89e2f59 100644
+--- a/src/node/routes/index.ts
++++ b/src/node/routes/index.ts
+@@ -21,6 +21,8 @@ import { errorHandler, wsErrorHandler } from "./errors"
+ import * as health from "./health"
+ import * as login from "./login"
+ import * as logout from "./logout"
++import * as registerRoute from "./register"
++import * as resetPasswordRoute from "./resetPassword"
+ import * as pathProxy from "./pathProxy"
+ import * as update from "./update"
+ import * as vscode from "./vscode"
+@@ -156,9 +158,13 @@ export const register = async (
+ 
+   if (args.auth === AuthType.Password) {
+     app.router.use("/login", login.router)
++    app.router.use("/register", registerRoute.router)
++    app.router.use("/reset-password", resetPasswordRoute.router)
+     app.router.use("/logout", logout.router)
+   } else {
+     app.router.all("/login", (req, res) => redirect(req, res, "/", {}))
++    app.router.all("/register", (req, res) => redirect(req, res, "/", {}))
++    app.router.all("/reset-password", (req, res) => redirect(req, res, "/", {}))
+     app.router.all("/logout", (req, res) => redirect(req, res, "/", {}))
+   }
+ 
+diff --git a/src/node/routes/login.ts b/src/node/routes/login.ts
+index e3f797e7..396beba9 100644
+--- a/src/node/routes/login.ts
++++ b/src/node/routes/login.ts
+@@ -6,6 +6,7 @@ import { rootPath } from "../constants"
+ import { authenticated, getCookieOptions, redirect, replaceTemplates } from "../http"
+ import i18n from "../i18n"
+ import { getPasswordMethod, handlePasswordValidation, sanitizeString, escapeHtml } from "../util"
++import { hasPassword } from "./passwordConfig"
+ 
+ // RateLimiter wraps around the limiter library for logins.
+ // It allows 2 logins every minute plus 12 logins every hour.
+@@ -39,6 +40,8 @@ const getRoot = async (req: Request, error?: Error): Promise<string> => {
+     passwordMsg = i18n.t("LOGIN_USING_HASHED_PASSWORD")
+   }
+ 
++  const displayError = error || getErrorFromQuery(req)
++
+   return replaceTemplates(
+     req,
+     content
+@@ -48,18 +51,36 @@ const getRoot = async (req: Request, error?: Error): Promise<string> => {
+       .replace(/{{I18N_LOGIN_BELOW}}/g, i18n.t("LOGIN_BELOW"))
+       .replace(/{{I18N_PASSWORD_PLACEHOLDER}}/g, i18n.t("PASSWORD_PLACEHOLDER"))
+       .replace(/{{I18N_SUBMIT}}/g, i18n.t("SUBMIT"))
+-      .replace(/{{ERROR}}/, error ? `<div class="error">${escapeHtml(error.message)}</div>` : ""),
++      .replace(/{{ERROR}}/, displayError ? `<span class="error" role="alert">${escapeHtml(displayError.message)}</span>` : ""),
+   )
+ }
+ 
++const getErrorFromQuery = (req: Request): Error | undefined => {
++  switch (req.query.error) {
++    case "configured":
++      return new Error("Password was already configured. Sign in instead.")
++    case "rate-limit":
++      return new Error(i18n.t("LOGIN_RATE_LIMIT") as string)
++    case "missing":
++      return new Error(i18n.t("MISS_PASSWORD") as string)
++    case "incorrect":
++      return new Error(i18n.t("INCORRECT_PASSWORD") as string)
++    default:
++      return undefined
++  }
++}
++
+ const limiter = new RateLimiter()
+ 
+ export const router = Router()
+ 
+ router.use(async (req, res, next) => {
+   const to = (typeof req.query.to === "string" && req.query.to) || "/"
++  if (!hasPassword(req)) {
++    return redirect(req, res, "register", { to, error: undefined })
++  }
+   if (await authenticated(req)) {
+-    return redirect(req, res, to, { to: undefined })
++    return redirect(req, res, to, { to: undefined, error: undefined })
+   }
+   next()
+ })
+@@ -72,50 +93,45 @@ router.post<{}, string, { password?: string; base?: string } | undefined, { to?:
+   const password = sanitizeString(req.body?.password)
+   const hashedPasswordFromArgs = req.args["hashed-password"]
+ 
+-  try {
+-    // Check to see if they exceeded their login attempts
+-    if (!limiter.canTry()) {
+-      throw new Error(i18n.t("LOGIN_RATE_LIMIT") as string)
+-    }
+-
+-    if (!password) {
+-      throw new Error(i18n.t("MISS_PASSWORD") as string)
+-    }
+-
+-    const passwordMethod = getPasswordMethod(hashedPasswordFromArgs)
+-    const { isPasswordValid, hashedPassword } = await handlePasswordValidation({
+-      passwordMethod,
+-      hashedPasswordFromArgs,
+-      passwordFromRequestBody: password,
+-      passwordFromArgs: req.args.password,
+-    })
+-
+-    if (isPasswordValid) {
+-      // The hash does not add any actual security but we do it for
+-      // obfuscation purposes (and as a side effect it handles escaping).
+-      res.cookie(req.cookieSessionName, hashedPassword, getCookieOptions(req))
+-
+-      const to = (typeof req.query.to === "string" && req.query.to) || "/"
+-      return redirect(req, res, to, { to: undefined })
+-    }
+-
+-    // Note: successful logins should not count against the RateLimiter
+-    // which is why this logic must come after the successful login logic
+-    limiter.removeToken()
+-
+-    console.error(
+-      "Failed login attempt",
+-      JSON.stringify({
+-        xForwardedFor: req.headers["x-forwarded-for"],
+-        remoteAddress: req.connection.remoteAddress,
+-        userAgent: req.headers["user-agent"],
+-        timestamp: Math.floor(new Date().getTime() / 1000),
+-      }),
+-    )
+-
+-    throw new Error(i18n.t("INCORRECT_PASSWORD") as string)
+-  } catch (error: any) {
+-    const renderedHtml = await getRoot(req, error)
+-    res.send(renderedHtml)
++  // Check to see if they exceeded their login attempts
++  if (!limiter.canTry()) {
++    return redirect(req, res, "login", { error: "rate-limit" })
++  }
++
++  if (!password) {
++    return redirect(req, res, "login", { error: "missing" })
++  }
++
++  const passwordMethod = getPasswordMethod(hashedPasswordFromArgs)
++  const { isPasswordValid, hashedPassword } = await handlePasswordValidation({
++    passwordMethod,
++    hashedPasswordFromArgs,
++    passwordFromRequestBody: password,
++    passwordFromArgs: req.args.password,
++  })
++
++  if (isPasswordValid) {
++    // The hash does not add any actual security but we do it for
++    // obfuscation purposes (and as a side effect it handles escaping).
++    res.cookie(req.cookieSessionName, hashedPassword, getCookieOptions(req))
++
++    const to = (typeof req.query.to === "string" && req.query.to) || "/"
++    return redirect(req, res, to, { to: undefined, error: undefined })
+   }
++
++  // Note: successful logins should not count against the RateLimiter
++  // which is why this logic must come after the successful login logic
++  limiter.removeToken()
++
++  console.error(
++    "Failed login attempt",
++    JSON.stringify({
++      xForwardedFor: req.headers["x-forwarded-for"],
++      remoteAddress: req.connection.remoteAddress,
++      userAgent: req.headers["user-agent"],
++      timestamp: Math.floor(new Date().getTime() / 1000),
++    }),
++  )
++
++  return redirect(req, res, "login", { error: "incorrect" })
+ })
+diff --git a/src/node/routes/passwordConfig.ts b/src/node/routes/passwordConfig.ts
+new file mode 100644
+index 00000000..d2ec5bb1
+--- /dev/null
++++ b/src/node/routes/passwordConfig.ts
+@@ -0,0 +1,94 @@
++import { promises as fs } from "fs"
++import { dump, load } from "js-yaml"
++import * as path from "path"
++import * as express from "express"
++import { getPasswordMethod, handlePasswordValidation } from "../util"
++
++type ConfigFile = {
++  auth?: string
++  password?: string
++  "hashed-password"?: string
++}
++
++export const hasPassword = (req: express.Request): boolean => !!(req.args.password || req.args["hashed-password"])
++
++export const isEnvPasswordManaged = (req: express.Request): boolean =>
++  !!(req.args.usingEnvPassword || req.args.usingEnvHashedPassword)
++
++let passwordConfigWriteQueue: Promise<void> = Promise.resolve()
++
++const withPasswordConfigWriteLock = async <T>(write: () => Promise<T>): Promise<T> => {
++  const previousWrite = passwordConfigWriteQueue
++  let releaseWrite: (() => void) | undefined
++  passwordConfigWriteQueue = new Promise<void>((resolve) => {
++    releaseWrite = resolve
++  })
++
++  await previousWrite
++  try {
++    return await write()
++  } finally {
++    releaseWrite?.()
++  }
++}
++
++const readConfig = async (configPath: string): Promise<ConfigFile> => {
++  let configFile = ""
++  try {
++    configFile = await fs.readFile(configPath, "utf8")
++  } catch (error: any) {
++    if (error.code !== "ENOENT") {
++      throw error
++    }
++  }
++
++  const config = configFile ? load(configFile, { filename: configPath }) : {}
++  if (!config || typeof config === "string" || Array.isArray(config)) {
++    throw new Error(`invalid config: ${config}`)
++  }
++
++  return config as ConfigFile
++}
++
++export const writeHashedPassword = async (
++  req: express.Request,
++  hashedPassword: string,
++  options?: { allowExisting?: boolean },
++): Promise<boolean> => {
++  const configPath = req.args.config
++  if (!configPath) {
++    throw new Error("Missing config path")
++  }
++
++  await fs.mkdir(path.dirname(configPath), { recursive: true })
++  return await withPasswordConfigWriteLock(async () => {
++    const config = await readConfig(configPath)
++    if ((config.password || config["hashed-password"]) && !options?.allowExisting) {
++      return false
++    }
++
++    config.auth = "password"
++    delete config.password
++    config["hashed-password"] = hashedPassword
++    await fs.writeFile(configPath, dump(config, { lineWidth: -1 }))
++
++    req.args.password = undefined
++    req.args["hashed-password"] = hashedPassword
++    req.args.usingEnvPassword = false
++    req.args.usingEnvHashedPassword = false
++    return true
++  })
++}
++
++export const validateExistingPassword = async (req: express.Request, password: string): Promise<boolean> => {
++  const hashedPasswordFromArgs = req.args["hashed-password"]
++  const passwordMethod = getPasswordMethod(hashedPasswordFromArgs)
++  const { isPasswordValid } = await handlePasswordValidation({
++    passwordMethod,
++    hashedPasswordFromArgs,
++    passwordFromRequestBody: password,
++    passwordFromArgs: req.args.password,
++  })
++
++  return isPasswordValid
++}
+diff --git a/src/node/routes/register.ts b/src/node/routes/register.ts
+new file mode 100644
+index 00000000..6e35c152
+--- /dev/null
++++ b/src/node/routes/register.ts
+@@ -0,0 +1,65 @@
++import { Router } from "express"
++import { promises as fs } from "fs"
++import * as path from "path"
++import { rootPath } from "../constants"
++import { getCookieOptions, redirect, replaceTemplates } from "../http"
++import { escapeHtml, hash, sanitizeString } from "../util"
++import { hasPassword, isEnvPasswordManaged, writeHashedPassword } from "./passwordConfig"
++
++const errorMessage = (error: unknown): string | undefined => {
++  switch (error) {
++    case "missing":
++      return "Enter a password"
++    case "mismatch":
++      return "Passwords do not match"
++    case "configured":
++      return "Password was already configured. Sign in instead."
++    default:
++      return undefined
++  }
++}
++
++const getRoot = async (req: Parameters<typeof replaceTemplates>[0]): Promise<string> => {
++  const content = await fs.readFile(path.join(rootPath, "src/browser/pages/register.html"), "utf8")
++  const error = typeof req.query.error === "string" ? errorMessage(req.query.error) : undefined
++  return replaceTemplates(
++    req,
++    content.replace(/{{ERROR}}/, error ? `<span class="error" role="alert">${escapeHtml(error)}</span>` : ""),
++  )
++}
++
++export const router = Router()
++
++router.use((req, res, next) => {
++  if (isEnvPasswordManaged(req) || hasPassword(req)) {
++    return redirect(req, res, "login", { error: undefined })
++  }
++
++  next()
++})
++
++router.get("/", async (req, res) => {
++  res.send(await getRoot(req))
++})
++
++router.post("/", async (req, res) => {
++  const password = sanitizeString(req.body?.password)
++  const confirmPassword = sanitizeString(req.body?.confirmPassword)
++  if (!password) {
++    return redirect(req, res, "register", { error: "missing" })
++  }
++
++  if (password !== confirmPassword) {
++    return redirect(req, res, "register", { error: "mismatch" })
++  }
++
++  const to = (typeof req.query.to === "string" && req.query.to) || "/"
++  const hashedPassword = await hash(password)
++  const didWritePassword = await writeHashedPassword(req, hashedPassword)
++  if (!didWritePassword) {
++    return redirect(req, res, "login", { to, error: "configured" })
++  }
++
++  res.cookie(req.cookieSessionName, hashedPassword, getCookieOptions(req))
++  return redirect(req, res, to, { to: undefined, error: undefined })
++})
+diff --git a/src/node/routes/resetPassword.ts b/src/node/routes/resetPassword.ts
+new file mode 100644
+index 00000000..a74849df
+--- /dev/null
++++ b/src/node/routes/resetPassword.ts
+@@ -0,0 +1,85 @@
++import { Router } from "express"
++import { promises as fs } from "fs"
++import * as path from "path"
++import { rootPath } from "../constants"
++import { authenticated, getCookieOptions, redirect, replaceTemplates } from "../http"
++import { escapeHtml, hash, sanitizeString } from "../util"
++import {
++  hasPassword,
++  isEnvPasswordManaged,
++  validateExistingPassword,
++  writeHashedPassword,
++} from "./passwordConfig"
++
++const errorMessage = (error: unknown): string | undefined => {
++  switch (error) {
++    case "missing-current":
++      return "Enter your current password"
++    case "incorrect-current":
++      return "Current password is incorrect"
++    case "missing-new":
++      return "Enter a new password"
++    case "mismatch":
++      return "Passwords do not match"
++    default:
++      return undefined
++  }
++}
++
++const getRoot = async (req: Parameters<typeof replaceTemplates>[0]): Promise<string> => {
++  const content = await fs.readFile(path.join(rootPath, "src/browser/pages/reset-password.html"), "utf8")
++  const error = typeof req.query.error === "string" ? errorMessage(req.query.error) : undefined
++  return replaceTemplates(
++    req,
++    content.replace(/{{ERROR}}/, error ? `<span class="error" role="alert">${escapeHtml(error)}</span>` : ""),
++  )
++}
++
++export const router = Router()
++
++router.use(async (req, res, next) => {
++  if (isEnvPasswordManaged(req)) {
++    res.status(404).send("Not found")
++    return
++  }
++
++  if (!hasPassword(req)) {
++    return redirect(req, res, "register", { error: undefined })
++  }
++
++  if (!(await authenticated(req))) {
++    return redirect(req, res, "login", { to: "/reset-password", error: undefined })
++  }
++
++  next()
++})
++
++router.get("/", async (req, res) => {
++  res.send(await getRoot(req))
++})
++
++router.post("/", async (req, res) => {
++  const currentPassword = sanitizeString(req.body?.currentPassword)
++  const newPassword = sanitizeString(req.body?.newPassword)
++  const confirmPassword = sanitizeString(req.body?.confirmPassword)
++  if (!currentPassword) {
++    return redirect(req, res, "reset-password", { error: "missing-current" })
++  }
++
++  if (!(await validateExistingPassword(req, currentPassword))) {
++    return redirect(req, res, "reset-password", { error: "incorrect-current" })
++  }
++
++  if (!newPassword) {
++    return redirect(req, res, "reset-password", { error: "missing-new" })
++  }
++
++  if (newPassword !== confirmPassword) {
++    return redirect(req, res, "reset-password", { error: "mismatch" })
++  }
++
++  const hashedPassword = await hash(newPassword)
++  await writeHashedPassword(req, hashedPassword, { allowExisting: true })
++  res.cookie(req.cookieSessionName, hashedPassword, getCookieOptions(req))
++  return redirect(req, res, "/", { base: undefined, href: undefined, error: undefined })
++})

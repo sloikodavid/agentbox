@@ -1,0 +1,25 @@
+diff --git a/lib/vscode/src/vs/server/node/webClientServer.ts b/lib/vscode/src/vs/server/node/webClientServer.ts
+index 1ae3af8..146a587 100644
+--- a/lib/vscode/src/vs/server/node/webClientServer.ts
++++ b/lib/vscode/src/vs/server/node/webClientServer.ts
+@@ -180,7 +180,7 @@ export class WebClientServer {
+ 			return serveError(req, res, 400, `Bad request.`);
+ 		}
+ 
+-		return serveFile(filePath, this._environmentService.isBuilt ? CacheControl.NO_EXPIRY : CacheControl.ETAG, this._logService, req, res, headers);
++		return serveFile(filePath, CacheControl.ETAG, this._logService, req, res, headers);
+ 	}
+ 
+ 	private _getResourceURLTemplateAuthority(uri: URI): string | undefined {
+diff --git a/lib/vscode/src/vs/workbench/browser/client.ts b/lib/vscode/src/vs/workbench/browser/client.ts
+index 12989e4..a172550 100644
+--- a/lib/vscode/src/vs/workbench/browser/client.ts
++++ b/lib/vscode/src/vs/workbench/browser/client.ts
+@@ -198,6 +198,7 @@ export class CodeServerClient extends Disposable {
+ 			try {
+ 				await navigator.serviceWorker.register(serviceWorker.path, {
+ 					scope: serviceWorker.scope,
++					updateViaCache: 'none',
+ 				});
+ 				this.logService.info('[Service Worker] registered');
+ 			} catch (error: any) {

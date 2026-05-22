@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="style-src 'self'; manifest-src 'self'; img-src 'self' data:; font-src 'self' data:;"
+		/>
+		<meta name="color-scheme" content="light dark" />
+		<title>{{ERROR_TITLE}} - {{APP_NAME}}</title>
+		<link rel="icon" href="{{CS_STATIC_BASE}}/src/browser/media/favicon-dark-support.svg" />
+		<link rel="alternate icon" href="{{CS_STATIC_BASE}}/src/browser/media/favicon.ico" />
+		<link rel="manifest" href="{{BASE}}/manifest.json" crossorigin="use-credentials" />
+		<link href="{{CS_STATIC_BASE}}/src/browser/pages/global.css" rel="stylesheet" />
+		<link href="{{CS_STATIC_BASE}}/src/browser/pages/error.css" rel="stylesheet" />
+		<meta id="coder-options" data-settings="{{OPTIONS}}" />
+	</head>
+	<body>
+		<main class="page">
+			<section class="stack" aria-labelledby="error-title">
+				<h1 id="error-title">{{ERROR_HEADER}}</h1>
+				<p>{{ERROR_BODY}}</p>
+				<a href="{{BASE}}{{TO}}">Go home</a>
+			</section>
+		</main>
+	</body>
+</html>
