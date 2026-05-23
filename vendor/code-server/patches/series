@@ -3,5 +3,7 @@ no-generated-password.diff
 persistd-readiness.diff
 browser-friendly-url.diff
 workbench-auth-actions.diff
+markdown-preview-loopback-callback-bridge.diff
+trusted-domains-loopback-callback-guard.diff
 workbench-cache.diff
 workbench-mobile.diff

@@ -103,14 +103,20 @@ rootfs/
   usr/
     share/
       applications/
-        agentbox.desktop
+        agentbox-text-editor.desktop
+        agentbox-url-handler.desktop
 scripts/
   format.mjs
 tests/
   fixtures/
     cert.pem
     key.pem
+  support/
+    loopbackCallbackGuard.ts
+  code-server-patches.test.ts
   code-server.test.ts
+  desktop-integration.test.ts
+  loopback-callback-guard.test.ts
 vendor/
   code-server/
     overlay/
@@ -146,9 +152,11 @@ vendor/
     patches/
       auth-flow.diff
       browser-friendly-url.diff
+      markdown-preview-loopback-callback-bridge.diff
       no-generated-password.diff
       persistd-readiness.diff
       series
+      trusted-domains-loopback-callback-guard.diff
       workbench-auth-actions.diff
       workbench-cache.diff
       workbench-mobile.diff

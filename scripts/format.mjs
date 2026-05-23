@@ -20,7 +20,7 @@ const check = !write && (args.size === 0 || explicitCheck);
 const LIST_OUTPUT_FILE = ".agents/skills/list/SKILL.md";
 const IGNORE_PATH = [
 	join(REPO_ROOT, ".gitignore"),
-	join(REPO_ROOT, ".prettierignore"),
+	join(REPO_ROOT, ".prettierignore")
 ];
 
 if (hasUnknownArg || (write && explicitCheck) || (!write && !check)) {
@@ -48,7 +48,7 @@ const LLM_REPLACEMENTS = [
 	[/\u200b/g, ""],
 	[/\u200c/g, ""],
 	[/\u200d/g, ""],
-	[/\ufeff/g, ""],
+	[/\ufeff/g, ""]
 ];
 const LIST_ITEM = /^(\s*(?:[-*+]|\d+\.)\s+)(.+)$/;
 const TERMINAL_PUNCTUATION = /[.!?:;,)\]"']$/;
@@ -61,14 +61,14 @@ function gitFiles() {
 	const output = execFileSync(
 		"git",
 		["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-		{ cwd: REPO_ROOT },
+		{ cwd: REPO_ROOT }
 	);
 	return output
 		.toString("utf8")
 		.split("\0")
 		.filter(Boolean)
 		.filter(
-			(path) => path !== LIST_OUTPUT_FILE && existsSync(join(REPO_ROOT, path)),
+			(path) => path !== LIST_OUTPUT_FILE && existsSync(join(REPO_ROOT, path))
 		);
 }
 
@@ -92,7 +92,7 @@ function renderList() {
 	const root = {
 		children: new Map(),
 		name: basename(REPO_ROOT),
-		type: "directory",
+		type: "directory"
 	};
 
 	for (const path of [...gitFiles(), LIST_OUTPUT_FILE]) {
@@ -113,7 +113,7 @@ function renderList() {
 		const entries = [...node.children.values()].sort((left, right) => {
 			if (left.type !== right.type) return left.type === "directory" ? -1 : 1;
 			return left.name.localeCompare(right.name, undefined, {
-				sensitivity: "base",
+				sensitivity: "base"
 			});
 		});
 
@@ -122,7 +122,7 @@ function renderList() {
 
 		return entries.flatMap((entry) => [
 			`${"  ".repeat(depth)}${entry.name}${entry.type === "directory" ? "/" : ""}`,
-			...(entry.type === "directory" ? renderNode(entry, depth + 1) : []),
+			...(entry.type === "directory" ? renderNode(entry, depth + 1) : [])
 		]);
 	}
 
@@ -137,7 +137,7 @@ function renderList() {
 		"```text",
 		...renderNode(root),
 		"```",
-		"",
+		""
 	].join("\n");
 }
 
@@ -242,7 +242,7 @@ function runPrettier({ write }) {
 	const result = spawnSync(
 		process.execPath,
 		[PRETTIER_BIN, "--log-level", "warn", write ? "--write" : "--check", "."],
-		{ cwd: REPO_ROOT, stdio: "inherit" },
+		{ cwd: REPO_ROOT, stdio: "inherit" }
 	);
 	return result.status === 0;
 }
@@ -252,7 +252,7 @@ async function runAll({ write }) {
 		runList({ write }),
 		await runLlmCharacters({ write }),
 		await runListPeriods({ write }),
-		runPrettier({ write }),
+		runPrettier({ write })
 	];
 	return results.every(Boolean);
 }

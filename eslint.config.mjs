@@ -9,12 +9,12 @@ export default defineConfig(
 		"coverage/",
 		"tmp/",
 		"vendor/",
-		"rootfs/home/user/.local/share/code-server/",
+		"rootfs/home/user/.local/share/code-server/"
 	]),
 	{
 		linterOptions: {
-			reportUnusedDisableDirectives: "error",
-		},
+			reportUnusedDisableDirectives: "error"
+		}
 	},
 	js.configs.recommended,
 	{
@@ -23,21 +23,21 @@ export default defineConfig(
 		languageOptions: {
 			parserOptions: {
 				projectService: true,
-				tsconfigRootDir: import.meta.dirname,
-			},
+				tsconfigRootDir: import.meta.dirname
+			}
 		},
 		rules: {
 			"@typescript-eslint/no-floating-promises": "error",
-			"@typescript-eslint/no-misused-promises": "error",
-		},
+			"@typescript-eslint/no-misused-promises": "error"
+		}
 	},
 	{
 		files: ["*.mjs", "scripts/**/*.mjs"],
 		languageOptions: {
 			globals: {
 				console: "readonly",
-				process: "readonly",
-			},
-		},
-	},
+				process: "readonly"
+			}
+		}
+	}
 );

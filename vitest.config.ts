@@ -4,7 +4,7 @@ export default defineConfig({
 	test: {
 		include: ["tests/**/*.test.ts"],
 		coverage: {
-			include: ["rootfs/opt/agentbox/**/*.ts"],
-		},
-	},
+			include: ["rootfs/opt/agentbox/**/*.ts"]
+		}
+	}
 });

@@ -6,6 +6,5 @@ Comment=Edit files in Agentbox
 Exec=code --reuse-window %F
 Terminal=false
 NoDisplay=true
-Categories=Utility;TextEditor;Development;
 StartupNotify=false
 MimeType=inode/directory;text/plain;text/markdown;text/x-markdown;text/x-c;text/x-c++;text/x-chdr;text/x-csrc;text/x-c++hdr;text/x-c++src;text/x-java;text/x-python;text/x-python3;text/x-go;text/x-rust;text/x-shellscript;text/x-script.sh;text/css;text/csv;text/html;text/javascript;text/xml;application/json;application/ld+json;application/x-yaml;application/yaml;text/yaml;application/xml;application/x-shellscript;application/x-desktop;application/x-subrip;application/sql;application/toml;application/x-toml;application/x-php;application/x-httpd-php;application/x-perl;application/x-ruby;application/x-lua;application/x-zerosize;

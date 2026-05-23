@@ -10,3 +10,4 @@ packages/persistd/target/
 .pnpm-store/
 .DS_Store
 Thumbs.db
+.playwright-cli

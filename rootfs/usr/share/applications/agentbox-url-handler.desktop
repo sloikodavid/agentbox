@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Agentbox
+GenericName=URL Handler
+Comment=Open web links from Agentbox
+Exec=/opt/code-server/current/lib/vscode/bin/helpers/browser.sh %U
+Terminal=false
+NoDisplay=true
+StartupNotify=false
+MimeType=x-scheme-handler/http;x-scheme-handler/https;

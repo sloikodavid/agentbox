@@ -11,7 +11,8 @@
 		"fix": "node scripts/format.mjs --write && eslint . --fix"
 	},
 	"prettier": {
-		"useTabs": true
+		"useTabs": true,
+		"trailingComma": "none"
 	},
 	"devDependencies": {
 		"@eslint/js": "10.0.1",

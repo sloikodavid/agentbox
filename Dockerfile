@@ -97,6 +97,7 @@ ARG PNPM_VERSION=11.0.9
 ENV AGENTBOX_BUILD_VERSION="${AGENTBOX_BUILD_VERSION}" \
   AGENTBOX_BUILD_REVISION="${AGENTBOX_BUILD_REVISION}" \
   AGENTBOX_BUILD_SOURCE="${AGENTBOX_BUILD_SOURCE}" \
+  BROWSER="/opt/code-server/current/lib/vscode/bin/helpers/browser.sh" \
   EDITOR="code --wait" \
   GIT_EDITOR="code --wait" \
   KUBE_EDITOR="code --wait" \
