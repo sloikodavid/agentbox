@@ -36,24 +36,27 @@ description: Use when you're not sure where to look, need to find the right file
 packages/
   persistd/
     src/
-      bin/
-        persistd-baseline.rs
       apply.rs
       audit.rs
       baseline.rs
+      capabilities.rs
       cli.rs
       config.rs
       control.rs
       daemon.rs
+      dirty.rs
       doctor.rs
       internal.rs
       layout.rs
       lib.rs
+      lifecycle.rs
       main.rs
       metadata.rs
       paths.rs
       prune.rs
+      public.rs
       readiness.rs
+      rootfs.rs
       status.rs
       update.rs
       watch.rs
@@ -106,6 +109,7 @@ rootfs/
         agentbox-text-editor.desktop
         agentbox-url-handler.desktop
 scripts/
+  check.mjs
   format.mjs
 tests/
   fixtures/

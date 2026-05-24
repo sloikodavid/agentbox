@@ -3,13 +3,19 @@
 
 use anyhow::{Context, Result, bail};
 use std::{
-    fs::{self, File},
-    io::{BufReader, BufWriter},
-    os::unix::fs::{FileTypeExt, MetadataExt, symlink},
-    path::{Path, PathBuf},
+    fs::{self, OpenOptions},
+    io::Write,
+    path::Path,
 };
 
-use crate::{baseline::BaselineDb, config::Config, metadata, paths::Paths};
+use crate::{
+    baseline::{BaselineDb, BaselineRecord},
+    config::Config,
+    metadata::{self, MetadataRecord},
+    paths::Paths,
+    public::{self, PublicPath},
+    rootfs::{self, FileKind, FsFacts},
+};
 
 pub struct UpdateContext<'a> {
     pub root: &'a Path,
@@ -23,315 +29,339 @@ pub enum UpdateOutcome {
     Ignored,
     Pruned,
     PersistedChanged,
+    PersistedMetadata,
     PersistedRemoved,
 }
 
 pub fn update_path(ctx: &UpdateContext<'_>, path: &str) -> Result<UpdateOutcome> {
-    let path = normalize_path(path)?;
-    if is_excluded(&path, ctx.config) {
+    update_public_path(ctx, &PublicPath::parse(path)?)
+}
+
+pub fn update_public_path(
+    ctx: &UpdateContext<'_>,
+    public_path: &PublicPath,
+) -> Result<UpdateOutcome> {
+    if public::is_excluded(public_path, ctx.config) {
         return Ok(UpdateOutcome::Ignored);
     }
 
-    let live_path = live_path(ctx.root, &path);
-    let baseline = ctx.baseline.get(&path)?;
-    let live = match fs::symlink_metadata(&live_path) {
-        Ok(metadata) => Some(metadata),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error).with_context(|| format!("stat {}", live_path.display())),
+    let live_path = public::live_path(ctx.root, public_path);
+    let baseline = ctx.baseline.get(public_path)?;
+    let live = match rootfs::facts(&live_path) {
+        Ok(facts) => Some(facts),
+        Err(error) => {
+            let not_found = error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+                || (!live_path.exists() && fs::symlink_metadata(&live_path).is_err());
+            if not_found {
+                None
+            } else {
+                return Err(error).with_context(|| format!("inspect {}", live_path.display()));
+            }
+        }
     };
 
     match (live, baseline) {
         (None, Some(_)) => {
-            remove_changed(ctx.paths, &path)?;
-            write_removed_marker(ctx.paths, &path)?;
-            metadata::remove(&ctx.paths.metadata_file, &path)?;
+            remove_changed(ctx.paths, public_path)?;
+            write_removed_marker(ctx.paths, public_path)?;
+            metadata::remove(&ctx.paths.metadata_file, public_path)?;
             Ok(UpdateOutcome::PersistedRemoved)
         }
         (None, None) => {
-            remove_changed(ctx.paths, &path)?;
-            remove_removed_marker(ctx.paths, &path)?;
-            metadata::remove(&ctx.paths.metadata_file, &path)?;
+            remove_changed(ctx.paths, public_path)?;
+            remove_removed_marker(ctx.paths, public_path)?;
+            metadata::remove(&ctx.paths.metadata_file, public_path)?;
             Ok(UpdateOutcome::Pruned)
         }
-        (Some(metadata), Some(record)) => {
-            if equals_baseline(&live_path, &metadata, &record)? {
-                remove_changed(ctx.paths, &path)?;
-                remove_removed_marker(ctx.paths, &path)?;
-                metadata::remove(&ctx.paths.metadata_file, &path)?;
-                Ok(UpdateOutcome::Pruned)
-            } else {
-                persist_changed(ctx.paths, &path, &live_path, &metadata)?;
-                remove_removed_marker(ctx.paths, &path)?;
-                Ok(UpdateOutcome::PersistedChanged)
+        (Some(live), Some(record)) => {
+            let decision = compare_to_baseline(ctx, public_path, &live_path, &live, &record)?;
+            match decision {
+                DeltaDecision::Equal => {
+                    remove_changed(ctx.paths, public_path)?;
+                    remove_removed_marker(ctx.paths, public_path)?;
+                    metadata::remove(&ctx.paths.metadata_file, public_path)?;
+                    Ok(UpdateOutcome::Pruned)
+                }
+                DeltaDecision::MetadataOnly => {
+                    remove_changed(ctx.paths, public_path)?;
+                    remove_removed_marker(ctx.paths, public_path)?;
+                    metadata::upsert(
+                        &ctx.paths.metadata_file,
+                        metadata_record(public_path, &live)?,
+                    )?;
+                    Ok(UpdateOutcome::PersistedMetadata)
+                }
+                DeltaDecision::Changed => {
+                    persist_changed(ctx.paths, public_path, &live_path, &live)?;
+                    remove_removed_marker(ctx.paths, public_path)?;
+                    Ok(UpdateOutcome::PersistedChanged)
+                }
             }
         }
-        (Some(metadata), None) => {
-            persist_changed(ctx.paths, &path, &live_path, &metadata)?;
-            remove_removed_marker(ctx.paths, &path)?;
+        (Some(live), None) => {
+            persist_changed(ctx.paths, public_path, &live_path, &live)?;
+            remove_removed_marker(ctx.paths, public_path)?;
             Ok(UpdateOutcome::PersistedChanged)
         }
     }
 }
 
-fn normalize_path(path: &str) -> Result<String> {
-    if !path.starts_with('/') {
-        bail!("path must be absolute: {path}");
-    }
-    if path == "/" {
-        bail!("root path cannot be updated");
-    }
-    if path.split('/').any(|part| part == "..") {
-        bail!("path cannot contain '..': {path}");
-    }
-
-    let mut normalized = String::new();
-    for part in path
-        .split('/')
-        .filter(|part| !part.is_empty() && *part != ".")
-    {
-        normalized.push('/');
-        normalized.push_str(part);
-    }
-
-    if normalized.is_empty() {
-        bail!("root path cannot be updated");
-    }
-    Ok(normalized)
+enum DeltaDecision {
+    Equal,
+    MetadataOnly,
+    Changed,
 }
 
-fn is_excluded(path: &str, config: &Config) -> bool {
-    config.exclusions.iter().any(|excluded| {
-        path == excluded
-            || path
-                .strip_prefix(excluded)
-                .is_some_and(|rest| rest.starts_with('/'))
-    })
-}
-
-fn live_path(root: &Path, path: &str) -> PathBuf {
-    root.join(path.trim_start_matches('/'))
-}
-
-fn equals_baseline(
+fn compare_to_baseline(
+    ctx: &UpdateContext<'_>,
+    public_path: &PublicPath,
     live_path: &Path,
-    metadata: &fs::Metadata,
-    record: &crate::baseline::BaselineRecord,
-) -> Result<bool> {
-    let file_type = metadata.file_type();
-    if kind(&file_type) != record.kind {
-        return Ok(false);
+    live: &FsFacts,
+    record: &BaselineRecord,
+) -> Result<DeltaDecision> {
+    if live.kind.as_str() != record.kind {
+        return Ok(DeltaDecision::Changed);
     }
 
-    if i64::from(metadata.mode()) != record.mode {
-        return Ok(false);
-    }
-    if i64::from(metadata.uid()) != record.uid || i64::from(metadata.gid()) != record.gid {
-        return Ok(false);
-    }
-
-    if file_type.is_file() {
-        let size: i64 = metadata.len().try_into().context("file size overflow")?;
-        if Some(size) != record.size {
-            return Ok(false);
+    let content_changed = match live.kind {
+        FileKind::File => {
+            let size: i64 = live
+                .size
+                .unwrap_or(0)
+                .try_into()
+                .context("file size overflow")?;
+            Some(size) != record.size || Some(rootfs::hash_file(live_path)?) != record.content_hash
         }
-        return Ok(Some(hash_file(live_path)?) == record.content_hash);
+        FileKind::Symlink => {
+            live.symlink_target.as_deref() != record.symlink_target_bytes.as_deref()
+        }
+        FileKind::CharDevice | FileKind::BlockDevice => {
+            live.rdev_major.map(|value| value as i64) != record.rdev_major
+                || live.rdev_minor.map(|value| value as i64) != record.rdev_minor
+        }
+        FileKind::Socket => false,
+        FileKind::Dir | FileKind::Fifo | FileKind::Unknown => false,
+    };
+
+    if content_changed {
+        return Ok(DeltaDecision::Changed);
     }
 
-    if file_type.is_symlink() {
-        let target = fs::read_link(live_path)
-            .with_context(|| format!("readlink {}", live_path.display()))?
-            .to_string_lossy()
-            .into_owned();
-        return Ok(Some(target) == record.symlink_target);
+    if hardlink_topology_changed(ctx, public_path, live, record)? {
+        return Ok(DeltaDecision::Changed);
     }
 
-    if file_type.is_char_device() || file_type.is_block_device() {
-        let (major, minor) = device_numbers(metadata, &file_type);
-        return Ok(major == record.rdev_major && minor == record.rdev_minor);
+    if metadata_differs(live, record)? {
+        return Ok(DeltaDecision::MetadataOnly);
     }
 
-    Ok(true)
+    Ok(DeltaDecision::Equal)
+}
+
+fn hardlink_topology_changed(
+    ctx: &UpdateContext<'_>,
+    public_path: &PublicPath,
+    live: &FsFacts,
+    record: &BaselineRecord,
+) -> Result<bool> {
+    if !matches!(live.kind, FileKind::File) {
+        return Ok(false);
+    }
+
+    let baseline_group = match &record.hardlink_key {
+        Some(key) => ctx
+            .baseline
+            .hardlink_group_paths(key)
+            .with_context(|| format!("load baseline hardlink group for {}", public_path))?,
+        None => return Ok(live.nlink > 1),
+    };
+
+    if live.nlink as i64 != record.nlink {
+        return Ok(true);
+    }
+
+    for sibling in baseline_group {
+        if public::is_excluded(&sibling, ctx.config) {
+            continue;
+        }
+        let sibling_path = public::live_path(ctx.root, &sibling);
+        let sibling_facts = match rootfs::facts(&sibling_path) {
+            Ok(facts) => facts,
+            Err(error) => {
+                let missing = error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+                    || fs::symlink_metadata(&sibling_path).is_err();
+                if missing {
+                    return Ok(true);
+                }
+                return Err(error).with_context(|| format!("inspect hardlink sibling {}", sibling));
+            }
+        };
+        if sibling_facts.dev != live.dev || sibling_facts.ino != live.ino {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+fn metadata_differs(live: &FsFacts, record: &BaselineRecord) -> Result<bool> {
+    if i64::from(live.mode) != record.mode
+        || i64::from(live.uid) != record.uid
+        || i64::from(live.gid) != record.gid
+        || !mtime_matches_baseline(live.mtime_ns, record.mtime_ns)
+    {
+        return Ok(true);
+    }
+
+    let baseline_xattrs = record
+        .xattr_json
+        .as_deref()
+        .map(serde_json::from_str::<Vec<rootfs::XattrRecord>>)
+        .transpose()?
+        .unwrap_or_default();
+    Ok(live.xattrs != baseline_xattrs)
+}
+
+pub(crate) fn mtime_matches_baseline(live_mtime_ns: i64, baseline_mtime_ns: i64) -> bool {
+    live_mtime_ns == baseline_mtime_ns
+        || live_mtime_ns == baseline_mtime_ns.div_euclid(1_000_000_000) * 1_000_000_000
 }
 
 fn persist_changed(
     paths: &Paths,
-    public_path: &str,
+    public_path: &PublicPath,
     live_path: &Path,
-    metadata: &fs::Metadata,
+    live: &FsFacts,
 ) -> Result<()> {
-    let destination = public_path_destination(&paths.changed_dir, public_path);
-    remove_removed_marker(paths, public_path)?;
-    remove_path(&destination)?;
-    ensure_parent(&destination)?;
-
-    let file_type = metadata.file_type();
-    if file_type.is_file() {
-        copy_file_atomic(live_path, &destination)?;
-    } else if file_type.is_dir() {
-        fs::create_dir_all(&destination)
-            .with_context(|| format!("create changed dir {}", destination.display()))?;
-    } else if file_type.is_symlink() {
-        let target = fs::read_link(live_path)
-            .with_context(|| format!("readlink {}", live_path.display()))?;
-        symlink_atomic(&target, &destination)?;
-    } else {
-        bail!(
-            "persist changed does not yet support {} at {}",
-            kind(&file_type),
-            live_path.display()
-        );
-    }
-
-    metadata::upsert(
-        &paths.metadata_file,
-        metadata_record(public_path, live_path, metadata)?,
-    )?;
-
-    Ok(())
-}
-
-fn remove_changed(paths: &Paths, public_path: &str) -> Result<()> {
-    remove_path(&public_path_destination(&paths.changed_dir, public_path))
-}
-
-fn write_removed_marker(paths: &Paths, public_path: &str) -> Result<()> {
-    let marker = public_path_destination(&paths.removed_dir, public_path);
-    ensure_parent(&marker)?;
-    let temp = temp_path(&marker);
-    fs::write(&temp, []).with_context(|| format!("write removed marker {}", temp.display()))?;
-    fs::rename(&temp, &marker)
-        .with_context(|| format!("publish removed marker {}", marker.display()))
-}
-
-fn remove_removed_marker(paths: &Paths, public_path: &str) -> Result<()> {
-    remove_path(&public_path_destination(&paths.removed_dir, public_path))
-}
-
-fn public_path_destination(root: &Path, public_path: &str) -> PathBuf {
-    root.join(public_path.trim_start_matches('/'))
-}
-
-fn ensure_parent(path: &Path) -> Result<()> {
-    let parent = path
-        .parent()
-        .with_context(|| format!("path has no parent: {}", path.display()))?;
-    fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))
-}
-
-fn remove_path(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_dir() => {
-            fs::remove_dir_all(path).with_context(|| format!("remove dir {}", path.display()))?;
+    let destination = public_path.destination(&paths.changed_dir);
+    match live.kind {
+        FileKind::Socket => {
+            bail!("refusing to persist live socket {}", live_path.display());
         }
-        Ok(_) => {
-            fs::remove_file(path).with_context(|| format!("remove file {}", path.display()))?;
+        FileKind::CharDevice | FileKind::BlockDevice => {
+            match rootfs::copy_entry_atomic(live_path, &destination) {
+                Ok(()) => {}
+                Err(error) => {
+                    metadata::upsert(
+                        &paths.metadata_file,
+                        metadata_record(public_path, live).with_context(|| {
+                            format!("record fallback metadata for {}", public_path)
+                        })?,
+                    )?;
+                    tracing::warn!(
+                        error = %error,
+                        path = %public_path,
+                        "stored device node as fallback metadata"
+                    );
+                    return Ok(());
+                }
+            }
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error).with_context(|| format!("stat {}", path.display())),
-    }
-    Ok(())
-}
-
-fn hash_file(path: &Path) -> Result<String> {
-    let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    let mut hasher = blake3::Hasher::new();
-    hasher
-        .update_reader(&mut reader)
-        .with_context(|| format!("hash {}", path.display()))?;
-    Ok(hasher.finalize().to_hex().to_string())
-}
-
-fn copy_file_atomic(source: &Path, destination: &Path) -> Result<()> {
-    let temp = temp_path(destination);
-    {
-        let mut reader = BufReader::new(File::open(source)?);
-        let mut writer = BufWriter::new(File::create(&temp)?);
-        std::io::copy(&mut reader, &mut writer)
-            .with_context(|| format!("copy {} to {}", source.display(), temp.display()))?;
-    }
-    fs::rename(&temp, destination)
-        .with_context(|| format!("publish {} to {}", temp.display(), destination.display()))
-}
-
-fn symlink_atomic(target: &Path, destination: &Path) -> Result<()> {
-    let temp = temp_path(destination);
-    let _ = fs::remove_file(&temp);
-    symlink(target, &temp).with_context(|| format!("symlink {}", temp.display()))?;
-    fs::rename(&temp, destination)
-        .with_context(|| format!("publish {} to {}", temp.display(), destination.display()))
-}
-
-fn temp_path(path: &Path) -> PathBuf {
-    path.with_file_name(format!(
-        ".{}.persistd-tmp",
-        path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("target")
-    ))
-}
-
-fn metadata_record(
-    public_path: &str,
-    live_path: &Path,
-    metadata: &fs::Metadata,
-) -> Result<metadata::MetadataRecord> {
-    let file_type = metadata.file_type();
-    Ok(metadata::MetadataRecord {
-        path: public_path.to_string(),
-        kind: kind(&file_type).to_string(),
-        mode: Some(metadata.mode()),
-        uid: Some(metadata.uid()),
-        gid: Some(metadata.gid()),
-        mtime_ns: Some(metadata.mtime() * 1_000_000_000 + metadata.mtime_nsec()),
-        symlink_target: if file_type.is_symlink() {
-            Some(
-                fs::read_link(live_path)
-                    .with_context(|| format!("readlink {}", live_path.display()))?
-                    .to_string_lossy()
-                    .into_owned(),
-            )
-        } else {
-            None
+        _ => match rootfs::copy_entry_atomic(live_path, &destination) {
+            Ok(()) => {}
+            Err(error) if rootfs::is_xattr_error(&error) => {
+                rootfs::copy_entry_atomic_without_xattrs(live_path, &destination)?;
+                metadata::upsert(
+                    &paths.metadata_file,
+                    metadata_record(public_path, live).with_context(|| {
+                        format!("record xattr fallback metadata for {}", public_path)
+                    })?,
+                )?;
+                tracing::warn!(
+                    error = %error,
+                    path = %public_path,
+                    "stored xattrs as fallback metadata"
+                );
+                return Ok(());
+            }
+            Err(error) => return Err(error),
         },
-        xattrs: None,
+    }
+
+    if metadata_record_needed(live) {
+        metadata::upsert(&paths.metadata_file, metadata_record(public_path, live)?)?;
+    } else {
+        metadata::remove(&paths.metadata_file, public_path)?;
+    }
+    Ok(())
+}
+
+fn metadata_record_needed(live: &FsFacts) -> bool {
+    live.nlink > 1 && matches!(live.kind, FileKind::File)
+}
+
+fn hardlink_key(live: &FsFacts) -> Option<String> {
+    if live.nlink > 1 && matches!(live.kind, FileKind::File) {
+        Some(format!("{}:{}", live.dev, live.ino))
+    } else {
+        None
+    }
+}
+
+fn metadata_record(public_path: &PublicPath, live: &FsFacts) -> Result<MetadataRecord> {
+    let mut record = MetadataRecord {
+        version: 1,
+        path: String::new(),
+        path_bytes_b64: None,
+        kind: live.kind.as_str().to_string(),
+        mode: Some(live.mode),
+        uid: Some(live.uid),
+        gid: Some(live.gid),
+        mtime_ns: Some(live.mtime_ns),
+        symlink_target: live
+            .symlink_target
+            .as_ref()
+            .map(|target| String::from_utf8_lossy(target).into_owned()),
+        symlink_target_bytes_b64: live.symlink_target.as_ref().map(|target| {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD.encode(target)
+        }),
+        rdev_major: live.rdev_major,
+        rdev_minor: live.rdev_minor,
+        hardlink_key: hardlink_key(live),
+        xattrs: if live.xattrs.is_empty() {
+            None
+        } else {
+            Some(live.xattrs.clone())
+        },
         acl: None,
         capability: None,
-    })
+    };
+    record.set_public_path(public_path);
+    Ok(record)
 }
 
-fn kind(file_type: &std::fs::FileType) -> &'static str {
-    if file_type.is_file() {
-        "file"
-    } else if file_type.is_dir() {
-        "dir"
-    } else if file_type.is_symlink() {
-        "symlink"
-    } else if file_type.is_fifo() {
-        "fifo"
-    } else if file_type.is_socket() {
-        "socket"
-    } else if file_type.is_char_device() {
-        "char_device"
-    } else if file_type.is_block_device() {
-        "block_device"
-    } else {
-        "unknown"
-    }
+fn remove_changed(paths: &Paths, public_path: &PublicPath) -> Result<()> {
+    public::remove_path(&public_path.destination(&paths.changed_dir))
 }
 
-fn device_numbers(
-    metadata: &fs::Metadata,
-    file_type: &std::fs::FileType,
-) -> (Option<i64>, Option<i64>) {
-    if !(file_type.is_char_device() || file_type.is_block_device()) {
-        return (None, None);
+fn write_removed_marker(paths: &Paths, public_path: &PublicPath) -> Result<()> {
+    let marker = public_path.destination(&paths.removed_dir);
+    public::ensure_parent(&marker)?;
+    let temp = public::temp_path(&marker);
+    let _ = fs::remove_file(&temp);
+    {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .with_context(|| format!("create removed marker {}", temp.display()))?;
+        file.write_all(&[])
+            .with_context(|| format!("write removed marker {}", temp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("fsync removed marker {}", temp.display()))?;
     }
+    fs::rename(&temp, &marker)
+        .with_context(|| format!("publish removed marker {}", marker.display()))?;
+    rootfs::fsync_parent(&marker)
+}
 
-    let rdev = metadata.rdev();
-    let major = ((rdev >> 8) & 0xfff) | ((rdev >> 32) & !0xfff);
-    let minor = (rdev & 0xff) | ((rdev >> 12) & !0xff);
-    (Some(major as i64), Some(minor as i64))
+fn remove_removed_marker(paths: &Paths, public_path: &PublicPath) -> Result<()> {
+    public::remove_path(&public_path.destination(&paths.removed_dir))
 }
 
 #[cfg(test)]
@@ -343,7 +373,11 @@ mod tests {
         layout,
         paths::Paths,
     };
-    use std::{fs, os::unix::fs::symlink};
+    use std::{
+        ffi::OsString,
+        fs,
+        os::unix::{ffi::OsStringExt, fs::symlink},
+    };
 
     #[test]
     fn changed_file_is_captured_and_removed_marker_is_cleared() {
@@ -360,18 +394,20 @@ mod tests {
             "changed"
         );
         assert!(!fixture.paths.removed_dir.join("etc/hello.txt").exists());
-        let metadata = crate::metadata::load(&fixture.paths.metadata_file).unwrap();
-        assert_eq!(metadata.len(), 1);
-        assert_eq!(metadata[0].path, "/etc/hello.txt");
     }
 
     #[test]
-    fn baseline_equal_file_prunes_changed_and_removed_entries() {
+    fn baseline_equal_file_prunes_changed_removed_and_metadata_entries() {
         let fixture = Fixture::new();
         fs::create_dir_all(fixture.paths.changed_dir.join("etc")).unwrap();
         fs::write(fixture.paths.changed_dir.join("etc/hello.txt"), "stale").unwrap();
         fs::create_dir_all(fixture.paths.removed_dir.join("etc")).unwrap();
         fs::write(fixture.paths.removed_dir.join("etc/hello.txt"), "").unwrap();
+        fs::write(
+            &fixture.paths.metadata_file,
+            r#"{"path":"/etc/hello.txt","kind":"file"}"#,
+        )
+        .unwrap();
 
         let outcome = update_path(&fixture.ctx(), "/etc/hello.txt").unwrap();
 
@@ -386,18 +422,51 @@ mod tests {
     }
 
     #[test]
-    fn touched_but_equal_file_does_not_persist() {
+    fn touched_but_equal_file_records_only_metadata() {
         let fixture = Fixture::new();
         let file = fixture.root.join("etc/hello.txt");
-        let mut times =
-            filetime::FileTime::from_last_modification_time(&fs::metadata(&file).unwrap());
-        times = filetime::FileTime::from_unix_time(times.unix_seconds() + 10, 0);
-        filetime::set_file_mtime(&file, times).unwrap();
+        filetime::set_file_mtime(&file, filetime::FileTime::from_unix_time(999, 0)).unwrap();
 
         let outcome = update_path(&fixture.ctx(), "/etc/hello.txt").unwrap();
 
-        assert_eq!(outcome, UpdateOutcome::Pruned);
+        assert_eq!(outcome, UpdateOutcome::PersistedMetadata);
         assert!(!fixture.paths.changed_dir.join("etc/hello.txt").exists());
+        assert_eq!(
+            crate::metadata::load(&fixture.paths.metadata_file)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn docker_truncated_baseline_mtime_is_not_metadata_drift() {
+        let fixture = Fixture::new();
+        let file = fixture.root.join("etc/hello.txt");
+        filetime::set_file_mtime(&file, filetime::FileTime::from_unix_time(123, 456_789_123))
+            .unwrap();
+        generate(&crate::baseline::GenerateOptions {
+            root: fixture.root.clone(),
+            output: fixture.paths.baseline_db.clone(),
+        })
+        .unwrap();
+        filetime::set_file_mtime(&file, filetime::FileTime::from_unix_time(123, 0)).unwrap();
+        let baseline = BaselineDb::open(&fixture.paths.baseline_db).unwrap();
+        let ctx = UpdateContext {
+            root: &fixture.root,
+            paths: &fixture.paths,
+            config: &fixture.config,
+            baseline: &baseline,
+        };
+
+        let outcome = update_path(&ctx, "/etc/hello.txt").unwrap();
+
+        assert_eq!(outcome, UpdateOutcome::Pruned);
+        assert!(
+            crate::metadata::load(&fixture.paths.metadata_file)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -410,11 +479,6 @@ mod tests {
         assert_eq!(outcome, UpdateOutcome::PersistedRemoved);
         assert!(fixture.paths.removed_dir.join("etc/hello.txt").exists());
         assert!(!fixture.paths.changed_dir.join("etc/hello.txt").exists());
-        assert!(
-            crate::metadata::load(&fixture.paths.metadata_file)
-                .unwrap()
-                .is_empty()
-        );
     }
 
     #[test]
@@ -445,7 +509,7 @@ mod tests {
     }
 
     #[test]
-    fn changed_symlink_is_captured() {
+    fn changed_symlink_is_captured_losslessly() {
         let fixture = Fixture::new();
         fs::remove_file(fixture.root.join("etc/hello-link")).unwrap();
         symlink("/new-target", fixture.root.join("etc/hello-link")).unwrap();
@@ -456,6 +520,68 @@ mod tests {
         assert_eq!(
             fs::read_link(fixture.paths.changed_dir.join("etc/hello-link")).unwrap(),
             std::path::PathBuf::from("/new-target")
+        );
+    }
+
+    #[test]
+    fn unchanged_baseline_hardlink_does_not_false_positive_on_image_inodes() {
+        let fixture = Fixture::new();
+
+        let outcome = update_path(&fixture.ctx(), "/etc/hard-a").unwrap();
+
+        assert_eq!(outcome, UpdateOutcome::Pruned);
+        assert!(!fixture.paths.changed_dir.join("etc/hard-a").exists());
+    }
+
+    #[test]
+    fn broken_baseline_hardlink_is_captured_with_equal_content() {
+        let fixture = Fixture::new();
+        fs::remove_file(fixture.root.join("etc/hard-b")).unwrap();
+        fs::write(fixture.root.join("etc/hard-b"), "shared").unwrap();
+
+        let outcome = update_path(&fixture.ctx(), "/etc/hard-a").unwrap();
+
+        assert_eq!(outcome, UpdateOutcome::PersistedChanged);
+        assert_eq!(
+            fs::read_to_string(fixture.paths.changed_dir.join("etc/hard-a")).unwrap(),
+            "shared"
+        );
+    }
+
+    #[test]
+    fn new_hardlink_to_baseline_file_is_captured() {
+        let fixture = Fixture::new();
+        fs::hard_link(
+            fixture.root.join("etc/hello.txt"),
+            fixture.root.join("hello-hardlink"),
+        )
+        .unwrap();
+
+        let outcome = update_path(&fixture.ctx(), "/etc/hello.txt").unwrap();
+
+        assert_eq!(outcome, UpdateOutcome::PersistedChanged);
+        assert!(fixture.paths.changed_dir.join("etc/hello.txt").exists());
+        assert_eq!(
+            crate::metadata::load(&fixture.paths.metadata_file)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn non_utf8_new_file_is_captured_without_lossy_identity() {
+        let fixture = Fixture::new();
+        let name = OsString::from_vec(vec![b'b', b'a', b'd', 0xff]);
+        fs::write(fixture.root.join(&name), "new").unwrap();
+        let public_path = crate::public::PublicPath::from_absolute_bytes(b"/bad\xff").unwrap();
+
+        let outcome = super::update_public_path(&fixture.ctx(), &public_path).unwrap();
+
+        assert_eq!(outcome, UpdateOutcome::PersistedChanged);
+        assert_eq!(
+            fs::read(fixture.paths.changed_dir.join(name)).unwrap(),
+            b"new"
         );
     }
 
@@ -489,6 +615,8 @@ mod tests {
             fs::create_dir_all(&opt).unwrap();
             fs::write(root.join("etc/hello.txt"), "hello").unwrap();
             symlink("/etc/hello.txt", root.join("etc/hello-link")).unwrap();
+            fs::write(root.join("etc/hard-a"), "shared").unwrap();
+            fs::hard_link(root.join("etc/hard-a"), root.join("etc/hard-b")).unwrap();
 
             generate(&GenerateOptions {
                 root: root.clone(),

@@ -1,55 +1,47 @@
 #![cfg(unix)]
 #![allow(dead_code)]
 
-use anyhow::{Context, Result, bail};
-use filetime::{FileTime, set_file_times, set_symlink_file_times};
-use std::{
-    ffi::CString,
-    fs::{self, File},
-    io::{BufReader, BufWriter},
-    os::unix::{
-        ffi::OsStrExt,
-        fs::{FileTypeExt, PermissionsExt, symlink},
-    },
-    path::{Path, PathBuf},
-};
-use walkdir::WalkDir;
+use anyhow::{Context, Result};
+use std::{collections::BTreeMap, fs, path::Path};
 
 use crate::{
     config::Config,
     metadata::{self, MetadataRecord},
     paths::Paths,
+    public::{self, PublicPath},
+    rootfs::{self, FileKind, FsFacts},
 };
 
 pub fn apply_public_truth(root: &Path, paths: &Paths, config: &Config) -> Result<()> {
     apply_removed(root, paths, config)?;
     apply_changed(root, paths, config)?;
     apply_metadata(root, paths, config)?;
+    apply_hardlinks(root, paths, config)?;
     Ok(())
 }
 
 fn apply_removed(root: &Path, paths: &Paths, config: &Config) -> Result<()> {
-    let mut markers = public_entries(&paths.removed_dir)?;
-    markers.sort_by_key(|path| std::cmp::Reverse(public_path_depth(path)));
+    let mut markers = public::list_public_file_paths(&paths.removed_dir)?;
+    markers.sort_by_key(|path| std::cmp::Reverse(path.depth()));
 
     for public_path in markers {
-        if is_excluded(&public_path, config) {
+        if public::is_excluded(&public_path, config) {
             continue;
         }
-        remove_live_path(&live_path(root, &public_path)?)?;
+        public::remove_path(&public::live_path(root, &public_path))?;
     }
     Ok(())
 }
 
 fn apply_changed(root: &Path, paths: &Paths, config: &Config) -> Result<()> {
-    let mut entries = changed_entries(&paths.changed_dir)?;
-    entries.sort_by_key(|entry| public_path_depth(&entry.0));
+    let mut entries = public::list_public_entries(&paths.changed_dir)?;
+    entries.sort_by_key(|entry| entry.path.depth());
 
-    for (public_path, changed_path) in entries {
-        if is_excluded(&public_path, config) {
+    for entry in entries {
+        if public::is_excluded(&entry.path, config) {
             continue;
         }
-        apply_changed_entry(root, &public_path, &changed_path)?;
+        apply_changed_entry(root, &entry.path, &entry.full_path)?;
     }
     Ok(())
 }
@@ -57,252 +49,171 @@ fn apply_changed(root: &Path, paths: &Paths, config: &Config) -> Result<()> {
 fn apply_metadata(root: &Path, paths: &Paths, config: &Config) -> Result<()> {
     let records = metadata::compact(&paths.metadata_file)?;
     for record in records {
-        if is_excluded(&record.path, config) {
+        let public_path = record.public_path()?;
+        if public::is_excluded(&public_path, config) {
             continue;
         }
-        let target = live_path(root, &record.path)?;
-        if !target.exists() && fs::symlink_metadata(&target).is_err() {
-            continue;
-        }
+        let target = public::live_path(root, &public_path);
         apply_metadata_record(&target, &record)?;
     }
     Ok(())
 }
 
-fn apply_changed_entry(root: &Path, public_path: &str, changed_path: &Path) -> Result<()> {
-    let target = live_path(root, public_path)?;
-    let metadata = fs::symlink_metadata(changed_path)
-        .with_context(|| format!("stat changed {}", changed_path.display()))?;
-    let file_type = metadata.file_type();
+fn apply_changed_entry(root: &Path, public_path: &PublicPath, changed_path: &Path) -> Result<()> {
+    let target = public::live_path(root, public_path);
+    let source_facts =
+        rootfs::facts(changed_path).with_context(|| format!("stat {}", changed_path.display()))?;
 
-    ensure_safe_parent(root, &target)?;
-    remove_live_path(&target)?;
+    rootfs::ensure_safe_parent(root, &target)?;
 
-    if file_type.is_dir() {
-        fs::create_dir_all(&target).with_context(|| format!("create {}", target.display()))?;
-    } else if file_type.is_file() {
-        copy_file_atomic(changed_path, &target)?;
-    } else if file_type.is_symlink() {
-        let link_target = fs::read_link(changed_path)
-            .with_context(|| format!("readlink {}", changed_path.display()))?;
-        symlink_atomic(&link_target, &target)?;
+    if matches!(source_facts.kind, FileKind::Dir) {
+        match fs::symlink_metadata(&target) {
+            Ok(metadata) if metadata.file_type().is_dir() => {}
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                anyhow::bail!("refusing to replace symlink ancestor {}", target.display());
+            }
+            Ok(_) => {
+                public::remove_path(&target)?;
+                fs::create_dir_all(&target)
+                    .with_context(|| format!("create {}", target.display()))?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir_all(&target)
+                    .with_context(|| format!("create {}", target.display()))?;
+            }
+            Err(error) => return Err(error).with_context(|| format!("stat {}", target.display())),
+        }
+        rootfs::apply_facts(&target, &source_facts)?;
     } else {
-        bail!(
-            "apply changed does not yet support {} at {}",
-            kind(&file_type),
-            changed_path.display()
-        );
+        rootfs::copy_entry_atomic(changed_path, &target)?;
     }
     Ok(())
 }
 
 fn apply_metadata_record(target: &Path, record: &MetadataRecord) -> Result<()> {
-    let metadata = fs::symlink_metadata(target)
-        .with_context(|| format!("stat metadata target {}", target.display()))?;
-    let is_symlink = metadata.file_type().is_symlink();
-
-    if let (Some(uid), Some(gid)) = (record.uid, record.gid) {
-        lchown(target, uid, gid)?;
+    if fs::symlink_metadata(target).is_err() {
+        create_fallback_target(target, record)?;
     }
 
-    if let Some(mode) = record.mode
-        && !is_symlink
-    {
-        fs::set_permissions(target, fs::Permissions::from_mode(mode))
-            .with_context(|| format!("chmod {}", target.display()))?;
-    }
-
-    if let Some(mtime_ns) = record.mtime_ns {
-        let mtime = file_time_from_ns(mtime_ns);
-        if is_symlink {
-            set_symlink_file_times(target, mtime, mtime)
-                .with_context(|| format!("set symlink time {}", target.display()))?;
-        } else {
-            set_file_times(target, mtime, mtime)
-                .with_context(|| format!("set file time {}", target.display()))?;
+    if let Ok(mut facts) = rootfs::facts(target) {
+        if let Some(mode) = record.mode {
+            facts.mode = mode;
         }
+        if let Some(uid) = record.uid {
+            facts.uid = uid;
+        }
+        if let Some(gid) = record.gid {
+            facts.gid = gid;
+        }
+        if let Some(mtime_ns) = record.mtime_ns {
+            facts.mtime_ns = mtime_ns;
+        }
+        if let Some(xattrs) = &record.xattrs {
+            facts.xattrs = xattrs.clone();
+        }
+        rootfs::apply_facts(target, &facts)?;
     }
-
     Ok(())
 }
 
-fn public_entries(root: &Path) -> Result<Vec<String>> {
-    if !root.exists() {
-        return Ok(Vec::new());
-    }
+fn create_fallback_target(target: &Path, record: &MetadataRecord) -> Result<()> {
+    public::ensure_parent(target)?;
+    let facts = FsFacts {
+        kind: FileKind::from_kind_name(&record.kind),
+        mode: record.mode.unwrap_or(0o644),
+        uid: record.uid.unwrap_or(0),
+        gid: record.gid.unwrap_or(0),
+        size: None,
+        mtime_ns: record.mtime_ns.unwrap_or(0),
+        symlink_target: None,
+        rdev_major: record.rdev_major,
+        rdev_minor: record.rdev_minor,
+        dev: 0,
+        ino: 0,
+        nlink: 1,
+        xattrs: record.xattrs.clone().unwrap_or_default(),
+    };
 
-    let mut entries = Vec::new();
-    for entry in WalkDir::new(root).follow_links(false).min_depth(1) {
-        let entry = entry?;
-        let relative = entry.path().strip_prefix(root)?;
-        entries.push(format_public_path(relative));
+    match facts.kind {
+        FileKind::Fifo | FileKind::CharDevice | FileKind::BlockDevice => {
+            let temp = tempfile_like_source(target, &facts)?;
+            rootfs::copy_entry_atomic(&temp, target)?;
+            public::remove_path(&temp)?;
+        }
+        _ => {}
     }
-    Ok(entries)
+    Ok(())
 }
 
-fn changed_entries(root: &Path) -> Result<Vec<(String, PathBuf)>> {
-    if !root.exists() {
-        return Ok(Vec::new());
+fn tempfile_like_source(target: &Path, facts: &FsFacts) -> Result<std::path::PathBuf> {
+    let temp = public::temp_path(target);
+    public::remove_path(&temp)?;
+    match facts.kind {
+        FileKind::Fifo => {
+            let c = std::ffi::CString::new(temp.as_os_str().as_encoded_bytes())?;
+            let result = unsafe { libc::mkfifo(c.as_ptr(), facts.mode as libc::mode_t) };
+            if result != 0 {
+                return Err(std::io::Error::last_os_error()).context("mkfifo fallback");
+            }
+        }
+        FileKind::CharDevice | FileKind::BlockDevice => {
+            let c = std::ffi::CString::new(temp.as_os_str().as_encoded_bytes())?;
+            let mode = match facts.kind {
+                FileKind::CharDevice => libc::S_IFCHR,
+                FileKind::BlockDevice => libc::S_IFBLK,
+                _ => unreachable!(),
+            } | (facts.mode as libc::mode_t & 0o7777);
+            let dev = make_dev(facts.rdev_major.unwrap_or(0), facts.rdev_minor.unwrap_or(0));
+            let result = unsafe { libc::mknod(c.as_ptr(), mode, dev) };
+            if result != 0 {
+                return Err(std::io::Error::last_os_error()).context("mknod fallback");
+            }
+        }
+        _ => {}
     }
+    Ok(temp)
+}
 
-    let mut entries = Vec::new();
-    for entry in WalkDir::new(root).follow_links(false).min_depth(1) {
-        let entry = entry?;
-        if entry.file_type().is_dir() && !is_empty_dir(entry.path())? {
+fn apply_hardlinks(root: &Path, paths: &Paths, config: &Config) -> Result<()> {
+    let mut groups: BTreeMap<String, Vec<PublicPath>> = BTreeMap::new();
+    for record in metadata::load(&paths.metadata_file)? {
+        let Some(key) = record.hardlink_key.clone() else {
+            continue;
+        };
+        let public_path = record.public_path()?;
+        if public::is_excluded(&public_path, config) {
             continue;
         }
-        let relative = entry.path().strip_prefix(root)?;
-        entries.push((format_public_path(relative), entry.path().to_path_buf()));
+        groups.entry(key).or_default().push(public_path);
     }
-    Ok(entries)
-}
 
-fn is_empty_dir(path: &Path) -> Result<bool> {
-    Ok(fs::read_dir(path)
-        .with_context(|| format!("read {}", path.display()))?
-        .next()
-        .is_none())
-}
-
-fn format_public_path(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    format!("/{text}")
-}
-
-fn public_path_depth(path: &str) -> usize {
-    path.split('/').filter(|part| !part.is_empty()).count()
-}
-
-fn live_path(root: &Path, public_path: &str) -> Result<PathBuf> {
-    if !public_path.starts_with('/') || public_path == "/" {
-        bail!("invalid public path: {public_path}");
-    }
-    if public_path.split('/').any(|part| part == "..") {
-        bail!("public path cannot contain '..': {public_path}");
-    }
-    Ok(root.join(public_path.trim_start_matches('/')))
-}
-
-fn is_excluded(path: &str, config: &Config) -> bool {
-    config.exclusions.iter().any(|excluded| {
-        path == excluded
-            || path
-                .strip_prefix(excluded)
-                .is_some_and(|rest| rest.starts_with('/'))
-    })
-}
-
-fn ensure_safe_parent(root: &Path, target: &Path) -> Result<()> {
-    let parent = target
-        .parent()
-        .with_context(|| format!("target has no parent: {}", target.display()))?;
-    let relative = parent
-        .strip_prefix(root)
-        .with_context(|| format!("target escaped root: {}", target.display()))?;
-
-    let mut current = root.to_path_buf();
-    for component in relative.components() {
-        current.push(component);
-        match fs::symlink_metadata(&current) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                bail!(
-                    "refusing to apply through symlink ancestor {}",
-                    current.display()
-                );
+    for paths in groups.into_values() {
+        let mut existing = paths
+            .iter()
+            .map(|path| public::live_path(root, path))
+            .filter(|path| path.exists())
+            .collect::<Vec<_>>();
+        existing.sort();
+        let Some(source) = existing.first().cloned() else {
+            continue;
+        };
+        for target in existing.into_iter().skip(1) {
+            let source_facts = rootfs::facts(&source)?;
+            let target_facts = rootfs::facts(&target)?;
+            if source_facts.dev == target_facts.dev && source_facts.ino == target_facts.ino {
+                continue;
             }
-            Ok(metadata) if !metadata.file_type().is_dir() => {
-                bail!("ancestor is not a directory: {}", current.display());
-            }
-            Ok(_) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                fs::create_dir(&current)
-                    .with_context(|| format!("create {}", current.display()))?;
-            }
-            Err(error) => return Err(error).with_context(|| format!("stat {}", current.display())),
+            rootfs::make_hardlink(&source, &target)?;
         }
     }
     Ok(())
 }
 
-fn remove_live_path(path: &Path) -> Result<()> {
-    match fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_dir() => {
-            fs::remove_dir_all(path).with_context(|| format!("remove dir {}", path.display()))?;
-        }
-        Ok(_) => {
-            fs::remove_file(path).with_context(|| format!("remove file {}", path.display()))?;
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error).with_context(|| format!("stat {}", path.display())),
-    }
-    Ok(())
-}
-
-fn copy_file_atomic(source: &Path, target: &Path) -> Result<()> {
-    let temp = temp_path(target);
-    {
-        let mut reader = BufReader::new(File::open(source)?);
-        let mut writer = BufWriter::new(File::create(&temp)?);
-        std::io::copy(&mut reader, &mut writer)
-            .with_context(|| format!("copy {} to {}", source.display(), temp.display()))?;
-    }
-    fs::rename(&temp, target)
-        .with_context(|| format!("publish {} to {}", temp.display(), target.display()))
-}
-
-fn symlink_atomic(source: &Path, target: &Path) -> Result<()> {
-    let temp = temp_path(target);
-    let _ = fs::remove_file(&temp);
-    symlink(source, &temp).with_context(|| format!("symlink {}", temp.display()))?;
-    fs::rename(&temp, target)
-        .with_context(|| format!("publish {} to {}", temp.display(), target.display()))
-}
-
-fn temp_path(target: &Path) -> PathBuf {
-    target.with_file_name(format!(
-        ".{}.persistd-tmp",
-        target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("target")
-    ))
-}
-
-fn lchown(path: &Path, uid: u32, gid: u32) -> Result<()> {
-    let c_path = CString::new(path.as_os_str().as_bytes())
-        .with_context(|| format!("path contains NUL: {}", path.display()))?;
-    let result = unsafe { libc::lchown(c_path.as_ptr(), uid, gid) };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(std::io::Error::last_os_error()).with_context(|| format!("lchown {}", path.display()))
-    }
-}
-
-fn file_time_from_ns(ns: i64) -> FileTime {
-    let seconds = ns.div_euclid(1_000_000_000);
-    let nanos = ns.rem_euclid(1_000_000_000) as u32;
-    FileTime::from_unix_time(seconds, nanos)
-}
-
-fn kind(file_type: &std::fs::FileType) -> &'static str {
-    if file_type.is_file() {
-        "file"
-    } else if file_type.is_dir() {
-        "dir"
-    } else if file_type.is_symlink() {
-        "symlink"
-    } else if file_type.is_fifo() {
-        "fifo"
-    } else if file_type.is_socket() {
-        "socket"
-    } else if file_type.is_char_device() {
-        "char_device"
-    } else if file_type.is_block_device() {
-        "block_device"
-    } else {
-        "unknown"
-    }
+fn make_dev(major: u64, minor: u64) -> libc::dev_t {
+    (((major & 0xffff_f000) << 32)
+        | ((major & 0x0000_0fff) << 8)
+        | ((minor & 0xffff_ff00) << 12)
+        | (minor & 0x0000_00ff)) as libc::dev_t
 }
 
 #[cfg(test)]
@@ -313,6 +224,7 @@ mod tests {
         layout,
         metadata::{self, MetadataRecord},
         paths::Paths,
+        public::PublicPath,
     };
     use std::{fs, os::unix::fs::symlink};
 
@@ -345,6 +257,38 @@ mod tests {
     }
 
     #[test]
+    fn apply_treats_only_removed_files_as_tombstones() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.root.join("usr/bin")).unwrap();
+        fs::create_dir_all(fixture.root.join("usr/share/applications")).unwrap();
+        fs::write(fixture.root.join("usr/bin/supervisord"), "supervisor").unwrap();
+        fs::write(
+            fixture.root.join("usr/share/applications/agentbox.desktop"),
+            "desktop",
+        )
+        .unwrap();
+        fs::create_dir_all(fixture.paths.removed_dir.join("usr/share/applications")).unwrap();
+        fs::write(
+            fixture
+                .paths
+                .removed_dir
+                .join("usr/share/applications/agentbox.desktop"),
+            "",
+        )
+        .unwrap();
+
+        apply_public_truth(&fixture.root, &fixture.paths, &Config::default()).unwrap();
+
+        assert!(fixture.root.join("usr/bin/supervisord").exists());
+        assert!(
+            !fixture
+                .root
+                .join("usr/share/applications/agentbox.desktop")
+                .exists()
+        );
+    }
+
+    #[test]
     fn apply_restores_changed_directory_file_and_symlink() {
         let fixture = Fixture::new();
         fs::create_dir_all(fixture.paths.changed_dir.join("dir")).unwrap();
@@ -364,25 +308,40 @@ mod tests {
     }
 
     #[test]
-    fn apply_metadata_sets_mode_and_mtime() {
+    fn apply_metadata_sets_mode_mtime_and_xattr() {
         let fixture = Fixture::new();
         fs::write(fixture.root.join("file"), "file").unwrap();
-        metadata::upsert(
-            &fixture.paths.metadata_file,
-            MetadataRecord {
-                path: "/file".into(),
-                kind: "file".into(),
-                mode: Some(0o600),
-                uid: None,
-                gid: None,
-                mtime_ns: Some(42_000_000_123),
-                symlink_target: None,
-                xattrs: None,
-                acl: None,
-                capability: None,
-            },
-        )
-        .unwrap();
+        let public_path = PublicPath::parse("/file").unwrap();
+        let mut record = MetadataRecord {
+            version: 1,
+            path: String::new(),
+            path_bytes_b64: None,
+            kind: "file".into(),
+            mode: Some(0o600),
+            uid: None,
+            gid: None,
+            mtime_ns: Some(42_000_000_123),
+            symlink_target: None,
+            symlink_target_bytes_b64: None,
+            rdev_major: None,
+            rdev_minor: None,
+            hardlink_key: None,
+            xattrs: Some(vec![crate::rootfs::XattrRecord {
+                name: "user.persistd-test".into(),
+                name_bytes_b64: {
+                    use base64::Engine as _;
+                    base64::engine::general_purpose::STANDARD.encode("user.persistd-test")
+                },
+                value_b64: {
+                    use base64::Engine as _;
+                    base64::engine::general_purpose::STANDARD.encode("value")
+                },
+            }]),
+            acl: None,
+            capability: None,
+        };
+        record.set_public_path(&public_path);
+        metadata::upsert(&fixture.paths.metadata_file, record).unwrap();
 
         apply_public_truth(&fixture.root, &fixture.paths, &Config::default()).unwrap();
 
@@ -393,6 +352,10 @@ mod tests {
         );
         assert_eq!(std::os::unix::fs::MetadataExt::mtime(&metadata), 42);
         assert_eq!(std::os::unix::fs::MetadataExt::mtime_nsec(&metadata), 123);
+        assert_eq!(
+            xattr::get(fixture.root.join("file"), "user.persistd-test").unwrap(),
+            Some(b"value".to_vec())
+        );
     }
 
     #[test]
@@ -408,6 +371,43 @@ mod tests {
             .to_string();
 
         assert!(error.contains("symlink ancestor"));
+    }
+
+    #[test]
+    fn apply_relinks_hardlink_groups_from_metadata() {
+        let fixture = Fixture::new();
+        fs::write(fixture.paths.changed_dir.join("a"), "same").unwrap();
+        fs::write(fixture.paths.changed_dir.join("b"), "same").unwrap();
+        for name in ["/a", "/b"] {
+            let public_path = PublicPath::parse(name).unwrap();
+            let mut record = MetadataRecord {
+                version: 1,
+                path: String::new(),
+                path_bytes_b64: None,
+                kind: "file".into(),
+                mode: None,
+                uid: None,
+                gid: None,
+                mtime_ns: None,
+                symlink_target: None,
+                symlink_target_bytes_b64: None,
+                rdev_major: None,
+                rdev_minor: None,
+                hardlink_key: Some("1:2".into()),
+                xattrs: None,
+                acl: None,
+                capability: None,
+            };
+            record.set_public_path(&public_path);
+            metadata::upsert(&fixture.paths.metadata_file, record).unwrap();
+        }
+
+        apply_public_truth(&fixture.root, &fixture.paths, &Config::default()).unwrap();
+
+        assert_eq!(
+            crate::rootfs::facts(&fixture.root.join("a")).unwrap().ino,
+            crate::rootfs::facts(&fixture.root.join("b")).unwrap().ino
+        );
     }
 
     struct Fixture {

@@ -11,22 +11,6 @@
 
 - Patch branding - name as well as letterpress, files under `/src/browser` in code-server source?
 
-- The OSS image can be safe and simple, but cloud can do more:
-  - run the same Agentbox image with managed infrastructure around it.
-  - easy domains and TLS.
-  - wildcard DNS/TLS for native code-server port proxy configuration.
-  - nicer identity/access UX without changing the image contract.
-  - relay/tunnel behavior only as infrastructure plumbing.
-  - zero-ops examples/docs-equivalent setup, not a separate product surface.
-  - managed HTTPS.
-  - private code-server auth.
-  - one-click public webhook endpoints.
-  - generated secrets.
-  - per-endpoint logs.
-  - runsc/sandboxing.
-  - backups.
-  - abuse controls.
-
 - Enable rulesets on GitHub.
 
 - Mirror the exact upstream release tarballs used by `Dockerfile` in a project-controlled location, such as an Agentbox GitHub release or GHCR artifact:

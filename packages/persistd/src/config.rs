@@ -1,6 +1,10 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path};
+use std::{
+    fs::{self, File, OpenOptions},
+    io::Write,
+    path::Path,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -68,7 +72,24 @@ fn write(path: &Path, config: &Config) -> Result<()> {
 
     let mut data = serde_json::to_vec_pretty(config).context("encode default config")?;
     data.push(b'\n');
-    fs::write(path, data).with_context(|| format!("write config {}", path.display()))
+    let temp = path.with_extension("json.tmp");
+    let _ = fs::remove_file(&temp);
+    {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+            .with_context(|| format!("create {}", temp.display()))?;
+        file.write_all(&data)
+            .with_context(|| format!("write {}", temp.display()))?;
+        file.sync_all()
+            .with_context(|| format!("fsync {}", temp.display()))?;
+    }
+    fs::rename(&temp, path)
+        .with_context(|| format!("publish config {} to {}", temp.display(), path.display()))?;
+    let dir = File::open(parent).with_context(|| format!("open {}", parent.display()))?;
+    dir.sync_all()
+        .with_context(|| format!("fsync {}", parent.display()))
 }
 
 #[cfg(test)]

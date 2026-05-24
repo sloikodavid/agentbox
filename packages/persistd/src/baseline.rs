@@ -2,15 +2,20 @@
 
 #[cfg(unix)]
 mod imp {
-    use anyhow::{Context, Result};
-    use rusqlite::{Connection, OptionalExtension, params};
+    use anyhow::{Context, Result, bail};
+    use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
     use std::{
-        fs::{self, File, Metadata},
-        io::BufReader,
-        os::unix::fs::{FileTypeExt, MetadataExt},
+        fs::{self, File},
         path::{Path, PathBuf},
     };
     use walkdir::{DirEntry, WalkDir};
+
+    use crate::{
+        public::PublicPath,
+        rootfs::{self, FileKind},
+    };
+
+    pub const BASELINE_SCHEMA_VERSION: i64 = 2;
 
     #[derive(Debug, Clone)]
     pub struct GenerateOptions {
@@ -36,6 +41,7 @@ mod imp {
         migrate(&conn)?;
         insert_records(&mut conn, options)?;
 
+        fsync_file(&temp_output)?;
         fs::rename(&temp_output, &options.output).with_context(|| {
             format!(
                 "publish baseline {} to {}",
@@ -43,6 +49,7 @@ mod imp {
                 options.output.display()
             )
         })?;
+        rootfs::fsync_parent(&options.output)?;
 
         Ok(())
     }
@@ -53,8 +60,16 @@ mod imp {
         PRAGMA journal_mode = DELETE;
         PRAGMA foreign_keys = ON;
 
+        CREATE TABLE meta (
+            key TEXT PRIMARY KEY NOT NULL,
+            value TEXT NOT NULL
+        );
+
+        INSERT INTO meta (key, value) VALUES ('schema_version', '2');
+
         CREATE TABLE records (
-            path TEXT PRIMARY KEY NOT NULL,
+            path_bytes BLOB PRIMARY KEY NOT NULL,
+            path TEXT NOT NULL,
             kind TEXT NOT NULL,
             mode INTEGER NOT NULL,
             uid INTEGER NOT NULL,
@@ -62,15 +77,22 @@ mod imp {
             size INTEGER,
             mtime_ns INTEGER NOT NULL,
             content_hash TEXT,
+            symlink_target_bytes BLOB,
             symlink_target TEXT,
             rdev_major INTEGER,
             rdev_minor INTEGER,
+            dev INTEGER NOT NULL,
+            ino INTEGER NOT NULL,
+            nlink INTEGER NOT NULL,
+            hardlink_key TEXT,
             xattr_json TEXT,
             acl_json TEXT,
             capability_json TEXT
         );
 
+        CREATE INDEX records_path_display ON records(path);
         CREATE INDEX records_kind ON records(kind);
+        CREATE INDEX records_hardlink_key ON records(hardlink_key);
         ",
         )
         .context("migrate baseline database")
@@ -82,6 +104,7 @@ mod imp {
             let mut insert = tx.prepare(
                 "
             INSERT INTO records (
+                path_bytes,
                 path,
                 kind,
                 mode,
@@ -90,20 +113,24 @@ mod imp {
                 size,
                 mtime_ns,
                 content_hash,
+                symlink_target_bytes,
                 symlink_target,
                 rdev_major,
                 rdev_minor,
+                dev,
+                ino,
+                nlink,
+                hardlink_key,
                 xattr_json,
                 acl_json,
                 capability_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
             ",
             )?;
 
             let mut entries = WalkDir::new(&options.root)
                 .follow_links(false)
                 .contents_first(false)
-                .same_file_system(true)
                 .into_iter();
 
             while let Some(entry) = entries.next() {
@@ -120,7 +147,8 @@ mod imp {
 
                 let record = BaselineRecord::from_entry(&entry, options)?;
                 insert.execute(params![
-                    record.path,
+                    record.path.as_bytes(),
+                    record.path.display(),
                     record.kind,
                     record.mode,
                     record.uid,
@@ -128,9 +156,14 @@ mod imp {
                     record.size,
                     record.mtime_ns,
                     record.content_hash,
+                    record.symlink_target_bytes,
                     record.symlink_target,
                     record.rdev_major,
                     record.rdev_minor,
+                    record.dev,
+                    record.ino,
+                    record.nlink,
+                    record.hardlink_key,
                     record.xattr_json,
                     record.acl_json,
                     record.capability_json,
@@ -142,23 +175,14 @@ mod imp {
 
     fn should_skip(entry: &DirEntry, options: &GenerateOptions) -> Result<bool> {
         let path = entry.path();
-        if path == options.output {
-            return Ok(true);
-        }
-        if path == options.output.with_extension("sqlite.tmp") {
+        if path == options.output || path == options.output.with_extension("sqlite.tmp") {
             return Ok(true);
         }
 
-        let display = display_path(&options.root, path)?;
+        let public_path = public_path(&options.root, path)?;
         Ok(matches!(
-            display.as_str(),
-            "/proc"
-                | "/sys"
-                | "/dev"
-                | "/run"
-                | "/data"
-                | "/opt/persistd/baseline.sqlite"
-                | "/opt/persistd/bin/persistd-baseline"
+            public_path.display().as_str(),
+            "/proc" | "/sys" | "/dev" | "/run" | "/data" | "/opt/persistd/baseline.sqlite"
         ))
     }
 
@@ -168,17 +192,45 @@ mod imp {
 
     impl BaselineDb {
         pub fn open(path: &Path) -> Result<Self> {
-            let conn = Connection::open(path)
-                .with_context(|| format!("open baseline {}", path.display()))?;
-            Ok(Self { conn })
+            let conn = Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .with_context(|| format!("open baseline {}", path.display()))?;
+            let db = Self { conn };
+            db.validate()?;
+            Ok(db)
         }
 
-        pub fn get(&self, path: &str) -> Result<Option<BaselineRecord>> {
+        fn validate(&self) -> Result<()> {
+            let schema_version: String = self
+                .conn
+                .query_row(
+                    "SELECT value FROM meta WHERE key = 'schema_version'",
+                    [],
+                    |row| row.get(0),
+                )
+                .context("baseline schema version is missing")?;
+            if schema_version.parse::<i64>()? != BASELINE_SCHEMA_VERSION {
+                bail!("unsupported baseline schema version {schema_version}");
+            }
+
+            let integrity: String = self
+                .conn
+                .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+                .context("baseline integrity check failed")?;
+            if integrity != "ok" {
+                bail!("baseline integrity check failed: {integrity}");
+            }
+            Ok(())
+        }
+
+        pub fn get(&self, path: &PublicPath) -> Result<Option<BaselineRecord>> {
             self.conn
                 .query_row(
                     "
                     SELECT
-                        path,
+                        path_bytes,
                         kind,
                         mode,
                         uid,
@@ -186,50 +238,95 @@ mod imp {
                         size,
                         mtime_ns,
                         content_hash,
+                        symlink_target_bytes,
                         symlink_target,
                         rdev_major,
                         rdev_minor,
+                        dev,
+                        ino,
+                        nlink,
+                        hardlink_key,
                         xattr_json,
                         acl_json,
                         capability_json
                     FROM records
-                    WHERE path = ?1
+                    WHERE path_bytes = ?1
                     ",
-                    params![path],
-                    |row| {
-                        Ok(BaselineRecord {
-                            path: row.get(0)?,
-                            kind: row.get(1)?,
-                            mode: row.get(2)?,
-                            uid: row.get(3)?,
-                            gid: row.get(4)?,
-                            size: row.get(5)?,
-                            mtime_ns: row.get(6)?,
-                            content_hash: row.get(7)?,
-                            symlink_target: row.get(8)?,
-                            rdev_major: row.get(9)?,
-                            rdev_minor: row.get(10)?,
-                            xattr_json: row.get(11)?,
-                            acl_json: row.get(12)?,
-                            capability_json: row.get(13)?,
-                        })
-                    },
+                    params![path.as_bytes()],
+                    row_to_record,
                 )
                 .optional()
                 .context("lookup baseline record")
         }
 
-        pub fn all_paths(&self) -> Result<Vec<String>> {
+        pub fn all_paths(&self) -> Result<Vec<PublicPath>> {
             let mut statement = self
                 .conn
-                .prepare("SELECT path FROM records ORDER BY path")
+                .prepare("SELECT path_bytes FROM records ORDER BY path_bytes")
                 .context("prepare baseline path scan")?;
             let rows = statement
-                .query_map([], |row| row.get::<_, String>(0))
+                .query_map([], |row| row.get::<_, Vec<u8>>(0))
                 .context("scan baseline paths")?;
             let mut paths = Vec::new();
             for row in rows {
-                paths.push(row?);
+                paths.push(PublicPath::from_absolute_bytes(&row?)?);
+            }
+            Ok(paths)
+        }
+
+        pub fn all_records(&self) -> Result<Vec<BaselineRecord>> {
+            let mut statement = self
+                .conn
+                .prepare(
+                    "
+                    SELECT
+                        path_bytes,
+                        kind,
+                        mode,
+                        uid,
+                        gid,
+                        size,
+                        mtime_ns,
+                        content_hash,
+                        symlink_target_bytes,
+                        symlink_target,
+                        rdev_major,
+                        rdev_minor,
+                        dev,
+                        ino,
+                        nlink,
+                        hardlink_key,
+                        xattr_json,
+                        acl_json,
+                        capability_json
+                    FROM records
+                    ORDER BY path_bytes
+                    ",
+                )
+                .context("prepare baseline record scan")?;
+            let rows = statement
+                .query_map([], row_to_record)
+                .context("scan baseline records")?;
+            let mut records = Vec::new();
+            for row in rows {
+                records.push(row?);
+            }
+            Ok(records)
+        }
+
+        pub fn hardlink_group_paths(&self, hardlink_key: &str) -> Result<Vec<PublicPath>> {
+            let mut statement = self
+                .conn
+                .prepare(
+                    "SELECT path_bytes FROM records WHERE hardlink_key = ?1 ORDER BY path_bytes",
+                )
+                .context("prepare baseline hardlink group scan")?;
+            let rows = statement
+                .query_map(params![hardlink_key], |row| row.get::<_, Vec<u8>>(0))
+                .context("scan baseline hardlink group")?;
+            let mut paths = Vec::new();
+            for row in rows {
+                paths.push(PublicPath::from_absolute_bytes(&row?)?);
             }
             Ok(paths)
         }
@@ -237,7 +334,7 @@ mod imp {
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct BaselineRecord {
-        pub path: String,
+        pub path: PublicPath,
         pub kind: String,
         pub mode: i64,
         pub uid: i64,
@@ -245,9 +342,14 @@ mod imp {
         pub size: Option<i64>,
         pub mtime_ns: i64,
         pub content_hash: Option<String>,
+        pub symlink_target_bytes: Option<Vec<u8>>,
         pub symlink_target: Option<String>,
         pub rdev_major: Option<i64>,
         pub rdev_minor: Option<i64>,
+        pub dev: i64,
+        pub ino: i64,
+        pub nlink: i64,
+        pub hardlink_key: Option<String>,
         pub xattr_json: Option<String>,
         pub acl_json: Option<String>,
         pub capability_json: Option<String>,
@@ -256,103 +358,152 @@ mod imp {
     impl BaselineRecord {
         fn from_entry(entry: &DirEntry, options: &GenerateOptions) -> Result<Self> {
             let path = entry.path();
-            let metadata = fs::symlink_metadata(path)
-                .with_context(|| format!("stat baseline path {}", path.display()))?;
-            let file_type = metadata.file_type();
-            let kind = kind(&file_type);
-            let size = if file_type.is_file() {
-                Some(metadata.len().try_into().context("file size overflow")?)
+            let public_path = public_path(&options.root, path)?;
+            let facts = rootfs::facts(path)?;
+            let content_hash = if matches!(facts.kind, FileKind::File) {
+                Some(rootfs::hash_file(path)?)
             } else {
                 None
             };
-            let content_hash = if file_type.is_file() {
-                Some(hash_file(path)?)
+            let xattr_json = if facts.xattrs.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&facts.xattrs)?)
+            };
+            let acl_json = acl_json(&facts.xattrs)?;
+            let capability_json = capability_json(&facts.xattrs)?;
+            let hardlink_key = if facts.nlink > 1 && matches!(facts.kind, FileKind::File) {
+                Some(format!("{}:{}", facts.dev, facts.ino))
             } else {
                 None
             };
-            let symlink_target = if file_type.is_symlink() {
-                Some(fs::read_link(path)?.to_string_lossy().into_owned())
-            } else {
-                None
-            };
-            let (rdev_major, rdev_minor) = device_numbers(&metadata, &file_type);
 
             Ok(Self {
-                path: display_path(&options.root, path)?,
-                kind: kind.to_string(),
-                mode: metadata.mode().into(),
-                uid: metadata.uid().into(),
-                gid: metadata.gid().into(),
-                size,
-                mtime_ns: metadata.mtime_nsec(),
+                path: public_path,
+                kind: facts.kind.as_str().to_string(),
+                mode: facts.mode.into(),
+                uid: facts.uid.into(),
+                gid: facts.gid.into(),
+                size: facts.size.map(|size| size as i64),
+                mtime_ns: facts.mtime_ns,
                 content_hash,
-                symlink_target,
-                rdev_major,
-                rdev_minor,
-                xattr_json: None,
-                acl_json: None,
-                capability_json: None,
+                symlink_target: facts
+                    .symlink_target
+                    .as_ref()
+                    .map(|target| display_bytes(target)),
+                symlink_target_bytes: facts.symlink_target,
+                rdev_major: facts.rdev_major.map(|value| value as i64),
+                rdev_minor: facts.rdev_minor.map(|value| value as i64),
+                dev: facts.dev as i64,
+                ino: facts.ino as i64,
+                nlink: facts.nlink as i64,
+                hardlink_key,
+                xattr_json,
+                acl_json,
+                capability_json,
             })
         }
     }
 
-    fn kind(file_type: &std::fs::FileType) -> &'static str {
-        if file_type.is_file() {
-            "file"
-        } else if file_type.is_dir() {
-            "dir"
-        } else if file_type.is_symlink() {
-            "symlink"
-        } else if file_type.is_fifo() {
-            "fifo"
-        } else if file_type.is_socket() {
-            "socket"
-        } else if file_type.is_char_device() {
-            "char_device"
-        } else if file_type.is_block_device() {
-            "block_device"
-        } else {
-            "unknown"
-        }
+    fn row_to_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<BaselineRecord> {
+        let path_bytes: Vec<u8> = row.get(0)?;
+        let path = PublicPath::from_absolute_bytes(&path_bytes).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                path_bytes.len(),
+                rusqlite::types::Type::Blob,
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    error.to_string(),
+                )),
+            )
+        })?;
+        Ok(BaselineRecord {
+            path,
+            kind: row.get(1)?,
+            mode: row.get(2)?,
+            uid: row.get(3)?,
+            gid: row.get(4)?,
+            size: row.get(5)?,
+            mtime_ns: row.get(6)?,
+            content_hash: row.get(7)?,
+            symlink_target_bytes: row.get(8)?,
+            symlink_target: row.get(9)?,
+            rdev_major: row.get(10)?,
+            rdev_minor: row.get(11)?,
+            dev: row.get(12)?,
+            ino: row.get(13)?,
+            nlink: row.get(14)?,
+            hardlink_key: row.get(15)?,
+            xattr_json: row.get(16)?,
+            acl_json: row.get(17)?,
+            capability_json: row.get(18)?,
+        })
     }
 
-    fn hash_file(path: &Path) -> Result<String> {
-        let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
-        let mut reader = BufReader::new(file);
-        let mut hasher = blake3::Hasher::new();
-        hasher
-            .update_reader(&mut reader)
-            .with_context(|| format!("hash {}", path.display()))?;
-        Ok(hasher.finalize().to_hex().to_string())
-    }
-
-    fn device_numbers(
-        metadata: &Metadata,
-        file_type: &std::fs::FileType,
-    ) -> (Option<i64>, Option<i64>) {
-        if !(file_type.is_char_device() || file_type.is_block_device()) {
-            return (None, None);
-        }
-
-        let rdev = metadata.rdev();
-        let major = ((rdev >> 8) & 0xfff) | ((rdev >> 32) & !0xfff);
-        let minor = (rdev & 0xff) | ((rdev >> 12) & !0xff);
-        (Some(major as i64), Some(minor as i64))
-    }
-
-    fn display_path(root: &Path, path: &Path) -> Result<String> {
+    fn public_path(root: &Path, path: &Path) -> Result<PublicPath> {
         let relative = path
             .strip_prefix(root)
             .with_context(|| format!("strip root {} from {}", root.display(), path.display()))?;
-        let text = relative.to_string_lossy().replace('\\', "/");
-        Ok(format!("/{text}"))
+        PublicPath::from_root_relative(relative)
+    }
+
+    fn fsync_file(path: &Path) -> Result<()> {
+        let file = File::open(path).with_context(|| format!("open {}", path.display()))?;
+        file.sync_all()
+            .with_context(|| format!("fsync {}", path.display()))
+    }
+
+    fn display_bytes(bytes: &[u8]) -> String {
+        if let Ok(text) = std::str::from_utf8(bytes) {
+            return text.to_string();
+        }
+        let mut display = String::new();
+        for byte in bytes {
+            match *byte {
+                b'/' => display.push('/'),
+                0x20..=0x7e if *byte != b'\\' => display.push(*byte as char),
+                _ => display.push_str(&format!("\\x{byte:02x}")),
+            }
+        }
+        display
+    }
+
+    fn acl_json(xattrs: &[rootfs::XattrRecord]) -> Result<Option<String>> {
+        let acl_records = xattrs
+            .iter()
+            .filter(|record| {
+                matches!(
+                    record.name.as_str(),
+                    "system.posix_acl_access" | "system.posix_acl_default"
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if acl_records.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(serde_json::to_string(&acl_records)?))
+        }
+    }
+
+    fn capability_json(xattrs: &[rootfs::XattrRecord]) -> Result<Option<String>> {
+        xattrs
+            .iter()
+            .find(|record| record.name == "security.capability")
+            .map(serde_json::to_string)
+            .transpose()
+            .context("encode file capability xattr")
     }
 
     #[cfg(test)]
     mod tests {
         use super::{BaselineDb, GenerateOptions, generate};
         use rusqlite::{Connection, OptionalExtension, params};
-        use std::{fs, os::unix::fs::symlink};
+        use std::{
+            ffi::OsString,
+            fs,
+            os::unix::{ffi::OsStringExt, fs::symlink},
+        };
 
         #[test]
         fn baseline_generation_records_file_hash_and_symlink_target() {
@@ -380,14 +531,14 @@ mod imp {
                 .unwrap();
             assert_eq!(hash, blake3::hash(b"hello").to_hex().to_string());
 
-            let target: String = conn
+            let target: Vec<u8> = conn
                 .query_row(
-                    "SELECT symlink_target FROM records WHERE path = '/etc/hello-link'",
+                    "SELECT symlink_target_bytes FROM records WHERE path = '/etc/hello-link'",
                     [],
                     |row| row.get(0),
                 )
                 .unwrap();
-            assert_eq!(target, "/etc/hello.txt");
+            assert_eq!(target, b"/etc/hello.txt");
         }
 
         #[test]
@@ -395,14 +546,13 @@ mod imp {
             let temp = tempfile::tempdir().unwrap();
             let root = temp.path().join("root");
             let output = root.join("opt/persistd/baseline.sqlite");
-            fs::create_dir_all(root.join("opt/persistd")).unwrap();
+            fs::create_dir_all(root.join("opt/persistd/bin")).unwrap();
             fs::create_dir_all(root.join("data")).unwrap();
             fs::create_dir_all(root.join("run")).unwrap();
-            fs::create_dir_all(root.join("opt/persistd/bin")).unwrap();
             fs::write(&output, "old baseline").unwrap();
             fs::write(root.join("data/user-file"), "ignored").unwrap();
             fs::write(root.join("run/runtime-file"), "ignored").unwrap();
-            fs::write(root.join("opt/persistd/bin/persistd-baseline"), "ignored").unwrap();
+            fs::write(root.join("opt/persistd/bin/persistd"), "kept").unwrap();
 
             generate(&GenerateOptions {
                 root: root.clone(),
@@ -417,7 +567,6 @@ mod imp {
                 "/data/user-file",
                 "/run",
                 "/run/runtime-file",
-                "/opt/persistd/bin/persistd-baseline",
             ] {
                 let found: Option<String> = conn
                     .query_row(
@@ -429,48 +578,31 @@ mod imp {
                     .unwrap();
                 assert_eq!(found, None, "{path} should be excluded");
             }
+
+            let persistd: Option<String> = conn
+                .query_row(
+                    "SELECT path FROM records WHERE path = '/opt/persistd/bin/persistd'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()
+                .unwrap();
+            assert_eq!(persistd, Some("/opt/persistd/bin/persistd".into()));
         }
 
         #[test]
-        fn baseline_schema_has_future_fidelity_columns() {
+        fn baseline_records_full_mtime_and_non_utf8_identity() {
             let temp = tempfile::tempdir().unwrap();
             let root = temp.path().join("root");
             let output = root.join("opt/persistd/baseline.sqlite");
+            let name = OsString::from_vec(vec![b'b', b'a', b'd', 0xff]);
             fs::create_dir_all(root.join("opt/persistd")).unwrap();
-
-            generate(&GenerateOptions {
-                root,
-                output: output.clone(),
-            })
+            fs::write(root.join(&name), "hello").unwrap();
+            filetime::set_file_mtime(
+                root.join(&name),
+                filetime::FileTime::from_unix_time(123, 456),
+            )
             .unwrap();
-
-            let conn = Connection::open(output).unwrap();
-            for column in [
-                "rdev_major",
-                "rdev_minor",
-                "xattr_json",
-                "acl_json",
-                "capability_json",
-            ] {
-                let count: i64 = conn
-                    .query_row(
-                        "SELECT COUNT(*) FROM pragma_table_info('records') WHERE name = ?1",
-                        params![column],
-                        |row| row.get(0),
-                    )
-                    .unwrap();
-                assert_eq!(count, 1, "missing column {column}");
-            }
-        }
-
-        #[test]
-        fn baseline_db_loads_record_by_path() {
-            let temp = tempfile::tempdir().unwrap();
-            let root = temp.path().join("root");
-            let output = root.join("opt/persistd/baseline.sqlite");
-            fs::create_dir_all(root.join("opt/persistd")).unwrap();
-            fs::create_dir_all(root.join("etc")).unwrap();
-            fs::write(root.join("etc/hello.txt"), "hello").unwrap();
 
             generate(&GenerateOptions {
                 root,
@@ -479,19 +611,108 @@ mod imp {
             .unwrap();
 
             let db = BaselineDb::open(&output).unwrap();
-            let record = db.get("/etc/hello.txt").unwrap().unwrap();
+            let public_path = crate::public::PublicPath::from_absolute_bytes(b"/bad\xff").unwrap();
+            let record = db.get(&public_path).unwrap().unwrap();
+            assert_eq!(record.path.as_bytes(), b"/bad\xff");
+            assert_eq!(record.mtime_ns, 123_000_000_456);
+        }
 
-            assert_eq!(record.path, "/etc/hello.txt");
-            assert_eq!(record.kind, "file");
-            assert_eq!(
-                record.content_hash,
-                Some(blake3::hash(b"hello").to_hex().to_string())
+        #[test]
+        fn baseline_open_fails_for_missing_or_corrupt_database() {
+            let temp = tempfile::tempdir().unwrap();
+            let missing = temp.path().join("missing.sqlite");
+            assert!(BaselineDb::open(&missing).is_err());
+
+            fs::write(&missing, "not sqlite").unwrap();
+            assert!(BaselineDb::open(&missing).is_err());
+        }
+
+        #[test]
+        fn baseline_records_fifo_hardlink_and_xattr_facts() {
+            let temp = tempfile::tempdir().unwrap();
+            let root = temp.path().join("root");
+            let output = root.join("opt/persistd/baseline.sqlite");
+            fs::create_dir_all(root.join("opt/persistd")).unwrap();
+            fs::write(root.join("a"), "same").unwrap();
+            fs::hard_link(root.join("a"), root.join("b")).unwrap();
+            xattr::set(root.join("a"), "user.persistd-test", b"value").unwrap();
+            unsafe {
+                let fifo = root.join("fifo");
+                let c = std::ffi::CString::new(std::os::unix::ffi::OsStrExt::as_bytes(
+                    fifo.as_os_str(),
+                ))
+                .unwrap();
+                assert_eq!(libc::mkfifo(c.as_ptr(), 0o644), 0);
+            }
+
+            generate(&GenerateOptions {
+                root,
+                output: output.clone(),
+            })
+            .unwrap();
+
+            let db = BaselineDb::open(&output).unwrap();
+            let a = db
+                .get(&crate::public::PublicPath::parse("/a").unwrap())
+                .unwrap()
+                .unwrap();
+            let b = db
+                .get(&crate::public::PublicPath::parse("/b").unwrap())
+                .unwrap()
+                .unwrap();
+            let fifo = db
+                .get(&crate::public::PublicPath::parse("/fifo").unwrap())
+                .unwrap()
+                .unwrap();
+
+            assert_eq!(a.hardlink_key, b.hardlink_key);
+            assert!(a.xattr_json.unwrap().contains("user.persistd-test"));
+            assert_eq!(fifo.kind, "fifo");
+        }
+
+        #[test]
+        fn baseline_extracts_acl_and_capability_views_from_xattrs() {
+            let xattrs = vec![
+                crate::rootfs::XattrRecord {
+                    name: "system.posix_acl_access".into(),
+                    name_bytes_b64: {
+                        use base64::Engine as _;
+                        base64::engine::general_purpose::STANDARD.encode("system.posix_acl_access")
+                    },
+                    value_b64: {
+                        use base64::Engine as _;
+                        base64::engine::general_purpose::STANDARD.encode("acl")
+                    },
+                },
+                crate::rootfs::XattrRecord {
+                    name: "security.capability".into(),
+                    name_bytes_b64: {
+                        use base64::Engine as _;
+                        base64::engine::general_purpose::STANDARD.encode("security.capability")
+                    },
+                    value_b64: {
+                        use base64::Engine as _;
+                        base64::engine::general_purpose::STANDARD.encode("cap")
+                    },
+                },
+            ];
+
+            assert!(
+                super::acl_json(&xattrs)
+                    .unwrap()
+                    .unwrap()
+                    .contains("posix_acl")
             );
-            assert_eq!(db.get("/missing").unwrap(), None);
+            assert!(
+                super::capability_json(&xattrs)
+                    .unwrap()
+                    .unwrap()
+                    .contains("security.capability")
+            );
         }
     }
 }
 
 #[cfg(unix)]
 #[allow(unused_imports)]
-pub use imp::{BaselineDb, BaselineRecord, GenerateOptions, generate};
+pub use imp::{BASELINE_SCHEMA_VERSION, BaselineDb, BaselineRecord, GenerateOptions, generate};

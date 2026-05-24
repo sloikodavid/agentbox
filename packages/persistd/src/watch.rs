@@ -17,10 +17,11 @@ use std::{
 use walkdir::WalkDir;
 
 use crate::{
-    baseline::BaselineDb,
     config::Config,
-    paths::Paths,
-    update::{UpdateContext, update_path},
+    dirty::DirtySender,
+    internal,
+    lifecycle::{LifecycleState, LifecycleStatus},
+    public::PublicPath,
 };
 
 pub struct Watcher {
@@ -29,8 +30,15 @@ pub struct Watcher {
 }
 
 impl Watcher {
-    pub fn start(root: PathBuf, paths: Paths, config: Config) -> Result<Self> {
-        initialize(&root, &paths, &config)?;
+    pub fn start(
+        root: PathBuf,
+        config: Config,
+        dirty_tx: DirtySender,
+        lifecycle: LifecycleStatus,
+        error_log: PathBuf,
+    ) -> Result<Self> {
+        lifecycle.set(LifecycleState::Initializing);
+        initialize(&root, &config)?;
 
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
@@ -38,7 +46,17 @@ impl Watcher {
         let thread = thread::Builder::new()
             .name("persistd-watch".into())
             .spawn(move || {
-                if let Err(error) = run_loop(root, paths, config, thread_stop, ready_tx) {
+                if let Err(error) = run_loop(
+                    root,
+                    config,
+                    dirty_tx,
+                    lifecycle.clone(),
+                    error_log.clone(),
+                    thread_stop,
+                    ready_tx,
+                ) {
+                    lifecycle.set(LifecycleState::Stopped);
+                    let _ = internal::write_error_log(&error_log, &format!("{error:#}"));
                     tracing::error!(error = %error, "watcher stopped");
                 }
             })
@@ -61,32 +79,27 @@ impl Drop for Watcher {
     }
 }
 
-fn initialize(root: &Path, paths: &Paths, config: &Config) -> Result<()> {
+fn initialize(root: &Path, config: &Config) -> Result<()> {
     let mut inotify = Inotify::init().context("initialize inotify")?;
     let mut watches = HashMap::new();
     register_existing_dirs(&mut inotify, &mut watches, root, root, config)?;
-    BaselineDb::open(&paths.baseline_db)?;
     Ok(())
 }
 
 fn run_loop(
     root: PathBuf,
-    paths: Paths,
     config: Config,
+    dirty_tx: DirtySender,
+    lifecycle: LifecycleStatus,
+    error_log: PathBuf,
     stop: Arc<AtomicBool>,
     ready: mpsc::Sender<()>,
 ) -> Result<()> {
     let mut inotify = Inotify::init().context("initialize inotify")?;
     let mut watches = HashMap::new();
     register_existing_dirs(&mut inotify, &mut watches, &root, &root, &config)?;
-    let baseline = BaselineDb::open(&paths.baseline_db)?;
-    let update_context = UpdateContext {
-        root: &root,
-        paths: &paths,
-        config: &config,
-        baseline: &baseline,
-    };
     let mut buffer = vec![0; 16 * 1024];
+    lifecycle.set(LifecycleState::Running);
     let _ = ready.send(());
 
     while !stop.load(Ordering::Relaxed) {
@@ -100,7 +113,10 @@ fn run_loop(
                 continue;
             }
             if event.mask.contains(EventMask::Q_OVERFLOW) {
-                tracing::warn!("inotify event queue overflowed; rolling audit will recover");
+                let message = "inotify event queue overflowed; rolling audit will recover";
+                lifecycle.set(LifecycleState::Degraded);
+                let _ = internal::write_error_log(&error_log, message);
+                tracing::warn!("{message}");
                 continue;
             }
             let Some(base) = watches.get(&event.wd) else {
@@ -120,9 +136,7 @@ fn run_loop(
 
             match public_path(&root, &candidate) {
                 Ok(public) => {
-                    if let Err(error) = update_path(&update_context, &public) {
-                        tracing::warn!(error = %error, path = public, "failed to update dirty path");
-                    }
+                    let _ = dirty_tx.send(public);
                 }
                 Err(error) => {
                     tracing::warn!(error = %error, path = %candidate.display(), "ignored invalid watch path")
@@ -147,10 +161,12 @@ fn register_existing_dirs(
         if !entry.file_type().is_dir() {
             continue;
         }
-        let public = public_path(root, entry.path())?;
-        if public != "/" && is_excluded(&public, config) {
-            entries.skip_current_dir();
-            continue;
+        if entry.path() != root {
+            let public = public_path(root, entry.path())?;
+            if crate::public::is_excluded(&public, config) {
+                entries.skip_current_dir();
+                continue;
+            }
         }
         let descriptor = inotify
             .watches()
@@ -178,105 +194,73 @@ fn event_path(base: &Path, name: Option<&OsStr>) -> PathBuf {
     }
 }
 
-fn public_path(root: &Path, path: &Path) -> Result<String> {
-    if path == root {
-        return Ok("/".into());
-    }
+pub fn public_path(root: &Path, path: &Path) -> Result<PublicPath> {
     let relative = path
         .strip_prefix(root)
         .with_context(|| format!("path escaped root: {}", path.display()))?;
-    Ok(format!(
-        "/{}",
-        relative.to_string_lossy().replace('\\', "/")
-    ))
-}
-
-fn is_excluded(path: &str, config: &Config) -> bool {
-    config.exclusions.iter().any(|excluded| {
-        path == excluded
-            || path
-                .strip_prefix(excluded)
-                .is_some_and(|rest| rest.starts_with('/'))
-    })
+    PublicPath::from_root_relative(relative)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{Watcher, public_path};
     use crate::{
-        baseline::{BaselineDb, GenerateOptions, generate},
         config::Config,
-        layout,
-        paths::Paths,
+        lifecycle::{LifecycleState, LifecycleStatus},
     };
-    use std::{fs, thread, time::Duration};
+    use std::{
+        fs,
+        sync::{Arc, atomic::AtomicU64, mpsc},
+        thread,
+        time::Duration,
+    };
 
     #[test]
-    fn watcher_captures_file_change() {
-        let fixture = Fixture::new();
+    fn watcher_emits_file_change_candidate() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("root");
+        fs::create_dir_all(root.join("etc")).unwrap();
+        fs::write(root.join("etc/hello.txt"), "hello").unwrap();
+        let (tx, rx) = mpsc::channel();
+        let dirty_tx = crate::dirty::DirtySender::new(tx, Arc::new(AtomicU64::new(0)));
+        let lifecycle = LifecycleStatus::new(LifecycleState::Initializing);
         let _watcher = Watcher::start(
-            fixture.root.clone(),
-            fixture.paths.clone(),
+            root.clone(),
             Config::default(),
+            dirty_tx,
+            lifecycle.clone(),
+            temp.path().join("watch-error.log"),
         )
         .unwrap();
+        assert_eq!(lifecycle.get(), LifecycleState::Running);
 
-        fs::write(fixture.root.join("etc/hello.txt"), "changed").unwrap();
+        fs::write(root.join("etc/hello.txt"), "changed").unwrap();
 
-        wait_until(|| fixture.paths.changed_dir.join("etc/hello.txt").exists());
+        let public = wait_for_candidate(rx);
+        assert_eq!(public.as_bytes(), b"/etc/hello.txt");
     }
 
     #[test]
-    fn public_path_formats_root_relative_unix_paths() {
-        let root = std::path::Path::new("/tmp/root");
+    fn public_path_preserves_root_relative_unix_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("etc")).unwrap();
         assert_eq!(
-            public_path(root, std::path::Path::new("/tmp/root/etc/hosts")).unwrap(),
-            "/etc/hosts"
+            public_path(root.path(), &root.path().join("etc/hosts"))
+                .unwrap()
+                .as_bytes(),
+            b"/etc/hosts"
         );
     }
 
-    struct Fixture {
-        _temp: tempfile::TempDir,
-        root: std::path::PathBuf,
-        paths: Paths,
-        _baseline: BaselineDb,
-    }
-
-    impl Fixture {
-        fn new() -> Self {
-            let temp = tempfile::tempdir().unwrap();
-            let root = temp.path().join("root");
-            let paths = Paths::new(
-                root.join("opt/persistd"),
-                temp.path().join("run/persistd"),
-                temp.path().join("data/persistd"),
-            );
-            fs::create_dir_all(root.join("etc")).unwrap();
-            fs::create_dir_all(&paths.opt_dir).unwrap();
-            fs::write(root.join("etc/hello.txt"), "hello").unwrap();
-            generate(&GenerateOptions {
-                root: root.clone(),
-                output: paths.baseline_db.clone(),
-            })
-            .unwrap();
-            layout::ensure(&paths).unwrap();
-            let baseline = BaselineDb::open(&paths.baseline_db).unwrap();
-            Self {
-                _temp: temp,
-                root,
-                paths,
-                _baseline: baseline,
-            }
-        }
-    }
-
-    fn wait_until(mut condition: impl FnMut() -> bool) {
+    fn wait_for_candidate(
+        rx: mpsc::Receiver<crate::public::PublicPath>,
+    ) -> crate::public::PublicPath {
         for _ in 0..50 {
-            if condition() {
-                return;
+            if let Ok(path) = rx.recv_timeout(Duration::from_millis(100)) {
+                return path;
             }
-            thread::sleep(Duration::from_millis(100));
+            thread::sleep(Duration::from_millis(10));
         }
-        panic!("condition did not become true");
+        panic!("candidate was not emitted");
     }
 }

@@ -3,12 +3,11 @@ use fs2::FileExt;
 use rusqlite::{Connection, params};
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader},
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::paths::Paths;
+use crate::{metadata, paths::Paths, public};
 
 pub struct WriterLock {
     _file: File,
@@ -80,25 +79,25 @@ impl StateDb {
     }
 
     pub fn rebuild_public_index(&self, paths: &Paths) -> Result<()> {
-        let mut changed = list_public_paths(&paths.changed_dir)?;
-        let mut removed = list_public_paths(&paths.removed_dir)?;
+        let mut changed = public::list_public_paths(&paths.changed_dir)?;
+        let mut removed = public::list_public_file_paths(&paths.removed_dir)?;
         changed.sort();
         removed.sort();
 
-        let metadata_count = count_metadata_records(&paths.metadata_file)?;
+        let metadata_count = metadata::load(&paths.metadata_file)?.len();
         let tx = self.conn.unchecked_transaction()?;
         tx.execute("DELETE FROM public_index", [])?;
 
         for path in changed {
             tx.execute(
                 "INSERT OR REPLACE INTO public_index (kind, path) VALUES ('changed', ?1)",
-                params![path],
+                params![path.display()],
             )?;
         }
         for path in removed {
             tx.execute(
                 "INSERT OR REPLACE INTO public_index (kind, path) VALUES ('removed', ?1)",
-                params![path],
+                params![path.display()],
             )?;
         }
         tx.execute(
@@ -146,9 +145,27 @@ impl StateDb {
 
     pub fn record_phase_success(&self, phase: &str) -> Result<()> {
         let now = timestamp();
+        self.set_meta(&format!("last_{phase}_success_at"), &now)?;
+        self.set_meta("last_error", "")?;
+        Ok(())
+    }
+
+    pub fn record_phase_failure(&self, phase: &str, error: &str) -> Result<()> {
+        let now = timestamp();
+        self.set_meta(&format!("last_{phase}_failure_at"), &now)?;
+        self.set_meta("last_error", error)?;
+        self.set_meta(&format!("last_{phase}_error"), error)?;
+        Ok(())
+    }
+
+    pub fn record_diagnostic(&self, key: &str, value: &str) -> Result<()> {
+        self.set_meta(&format!("diagnostic_{key}"), value)
+    }
+
+    fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
-            params![format!("last_{phase}_success_at"), now],
+            params![key, value],
         )?;
         Ok(())
     }
@@ -171,58 +188,18 @@ fn move_corrupt_db(paths: &Paths) -> Result<()> {
     })
 }
 
-fn list_public_paths(root: &Path) -> Result<Vec<String>> {
-    if !root.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut paths = Vec::new();
-    collect_public_paths(root, root, &mut paths)?;
-    Ok(paths)
-}
-
-fn collect_public_paths(root: &Path, current: &Path, paths: &mut Vec<String>) -> Result<()> {
-    for entry in fs::read_dir(current).with_context(|| format!("read {}", current.display()))? {
-        let entry = entry?;
-        let path = entry.path();
-        let relative = path
-            .strip_prefix(root)
-            .with_context(|| format!("strip public root {}", root.display()))?;
-        paths.push(format_public_path(relative));
-
-        if entry.file_type()?.is_dir() {
-            collect_public_paths(root, &path, paths)?;
-        }
-    }
-    Ok(())
-}
-
-fn format_public_path(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    format!("/{text}")
-}
-
-fn count_metadata_records(path: &Path) -> Result<u64> {
-    let file = match File::open(path) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(error) => return Err(error).with_context(|| format!("open {}", path.display())),
-    };
-
-    let mut count = 0;
-    for line in BufReader::new(file).lines() {
-        if !line?.trim().is_empty() {
-            count += 1;
-        }
-    }
-    Ok(count)
-}
-
 fn timestamp() -> String {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     format!("{}-{:09}", duration.as_secs(), duration.subsec_nanos())
+}
+
+pub fn write_error_log(path: &Path, error: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    fs::write(path, format!("{error}\n")).with_context(|| format!("write {}", path.display()))
 }
 
 #[cfg(test)]
@@ -248,8 +225,13 @@ mod tests {
         layout::ensure(&paths).unwrap();
         fs::create_dir_all(paths.changed_dir.join("etc")).unwrap();
         fs::write(paths.changed_dir.join("etc/hosts"), "changed").unwrap();
-        fs::write(paths.removed_dir.join("deleted"), "").unwrap();
-        fs::write(&paths.metadata_file, "{\"path\":\"/etc/hosts\"}\n\n").unwrap();
+        fs::create_dir_all(paths.removed_dir.join("nested")).unwrap();
+        fs::write(paths.removed_dir.join("nested/deleted"), "").unwrap();
+        fs::write(
+            &paths.metadata_file,
+            "{\"path\":\"/etc/hosts\",\"kind\":\"file\"}\n\n",
+        )
+        .unwrap();
 
         let db = StateDb::open_or_rebuild(&paths).unwrap();
 
@@ -275,6 +257,28 @@ mod tests {
                 .to_string_lossy()
                 .starts_with("state.sqlite.corrupt.")
         }));
+    }
+
+    #[test]
+    fn records_phase_failures_and_error_logs() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path());
+        layout::ensure(&paths).unwrap();
+        let db = StateDb::open_or_rebuild(&paths).unwrap();
+
+        db.record_phase_failure("apply", "missing baseline")
+            .unwrap();
+        super::write_error_log(&paths.apply_error_log, "missing baseline").unwrap();
+
+        assert_eq!(
+            db.meta_value("last_error").unwrap().as_deref(),
+            Some("missing baseline")
+        );
+        assert!(
+            fs::read_to_string(paths.apply_error_log)
+                .unwrap()
+                .contains("missing baseline")
+        );
     }
 
     fn test_paths(root: &std::path::Path) -> Paths {

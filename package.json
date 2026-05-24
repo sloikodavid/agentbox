@@ -7,7 +7,7 @@
 	"packageManager": "pnpm@11.0.9",
 	"scripts": {
 		"dev": "docker compose up --build",
-		"check": "tsc --noEmit && vitest run --coverage && eslint . && cargo fmt --manifest-path packages/persistd/Cargo.toml --check && cargo clippy --manifest-path packages/persistd/Cargo.toml --all-targets --all-features -- -D warnings && cargo test --manifest-path packages/persistd/Cargo.toml --all-targets --all-features && node scripts/format.mjs --check && pnpm dlx --package renovate renovate-config-validator renovate.json",
+		"check": "node scripts/check.mjs",
 		"fix": "node scripts/format.mjs --write && eslint . --fix"
 	},
 	"prettier": {
