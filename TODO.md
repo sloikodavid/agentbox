@@ -1,9 +1,5 @@
 # To-do
 
-- Improve auth flow from start to finish, including login.html.
-
-- Rewrite persistd in Rust from first principles.
-
 - Figure out the API including Shortcuts.
   - Copy URL button for shortcuts - uses a Webhook for command shortcuts and passes payload.
 
@@ -17,8 +13,7 @@
   - `code-server-<version>-linux-amd64.tar.gz`.
   - `code-server-<version>-linux-arm64.tar.gz`.
 - Add CI automation to mirror new code-server assets after Renovate opens or merges a code-server update?
-- Revisit patch stack vs dedicated code-server fork if patches become broad.
 
-## Future:
+## Future Ideas:
 
-- File/folder/workspace/shortcut sharing?
+- File/folder/workspace/shortcut/artifact sharing/collaboration.

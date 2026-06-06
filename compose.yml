@@ -8,10 +8,8 @@ services:
         AGENTBOX_BUILD_VERSION: ${AGENTBOX_BUILD_VERSION:-unknown}
     ports:
       - "${PORT:-8080}:8080"
-    environment:
-      PASSWORD: "12345"
     volumes:
-      - mydata:/data
+      - agentbox_data:/data
 
 volumes:
-  mydata:
+  agentbox_data:

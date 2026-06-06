@@ -57,12 +57,7 @@ impl Paths {
 }
 
 fn join(base: &std::path::Path, child: &str) -> PathBuf {
-    let mut text = base.to_string_lossy().replace('\\', "/");
-    if !text.ends_with('/') {
-        text.push('/');
-    }
-    text.push_str(child);
-    PathBuf::from(text)
+    base.join(child)
 }
 
 #[cfg(test)]

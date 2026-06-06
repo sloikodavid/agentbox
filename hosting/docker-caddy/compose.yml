@@ -1,0 +1,30 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      agentbox:
+        condition: service_healthy
+
+  agentbox:
+    image: ghcr.io/sloikodavid/agentbox:latest
+    restart: unless-stopped
+    # environment:
+    #   PASSWORD: "example123"
+    #   VSCODE_PROXY_URI: "https://{{port}}.example.com"
+    volumes:
+      - agentbox_data:/data
+    expose:
+      - "8080"
+
+volumes:
+  agentbox_data:
+  caddy_data:
+  caddy_config:

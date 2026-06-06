@@ -33,6 +33,13 @@ description: Use when you're not sure where to look, need to find the right file
   RELEASE.md
 .vscode/
   extensions.json
+docs/
+  self-hosting.md
+hosting/
+  docker-caddy/
+    Caddyfile
+    compose.yml
+    README.md
 packages/
   persistd/
     src/
@@ -109,7 +116,7 @@ rootfs/
         agentbox-text-editor.desktop
         agentbox-url-handler.desktop
 scripts/
-  check.mjs
+  check-rust.mjs
   format.mjs
 tests/
   fixtures/
@@ -176,9 +183,9 @@ Dockerfile
 eslint.config.mjs
 LICENSE
 package.json
-PLAN_2.md
 PLAN.md
 pnpm-lock.yaml
+README.md
 renovate.json
 SECURITY.md
 TODO.md

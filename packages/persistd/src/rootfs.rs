@@ -164,12 +164,10 @@ pub fn is_xattr_error(error: &anyhow::Error) -> bool {
 fn copy_entry_atomic_inner(source: &Path, destination: &Path, apply_xattrs: bool) -> Result<()> {
     let source_facts = facts(source)?;
     public::ensure_parent(destination)?;
-    public::remove_path(destination)?;
 
     match source_facts.kind {
         FileKind::File => copy_regular_stable(source, destination)?,
-        FileKind::Dir => fs::create_dir_all(destination)
-            .with_context(|| format!("create dir {}", destination.display()))?,
+        FileKind::Dir => ensure_directory_destination(destination)?,
         FileKind::Symlink => {
             let target = source_facts
                 .symlink_target
@@ -177,9 +175,9 @@ fn copy_entry_atomic_inner(source: &Path, destination: &Path, apply_xattrs: bool
                 .context("symlink missing target")?;
             symlink_atomic(OsStr::from_bytes(target), destination)?;
         }
-        FileKind::Fifo => make_fifo(destination, source_facts.mode)?,
+        FileKind::Fifo => make_fifo_atomic(destination, source_facts.mode)?,
         FileKind::CharDevice | FileKind::BlockDevice => {
-            make_device(destination, &source_facts)?;
+            make_device_atomic(destination, &source_facts)?;
         }
         FileKind::Socket => bail!("refusing to persist live socket {}", source.display()),
         FileKind::Unknown => bail!("unsupported file type at {}", source.display()),
@@ -300,7 +298,7 @@ fn copy_regular_stable(source: &Path, destination: &Path) -> Result<()> {
     for _ in 0..3 {
         let before =
             fs::symlink_metadata(source).with_context(|| format!("stat {}", source.display()))?;
-        copy_regular_once(source, destination)?;
+        let temp = copy_regular_to_temp(source, destination)?;
         let after =
             fs::symlink_metadata(source).with_context(|| format!("stat {}", source.display()))?;
         if before.ino() == after.ino()
@@ -309,8 +307,10 @@ fn copy_regular_stable(source: &Path, destination: &Path) -> Result<()> {
             && before.mtime() == after.mtime()
             && before.mtime_nsec() == after.mtime_nsec()
         {
+            publish_temp(&temp, destination)?;
             return Ok(());
         }
+        let _ = public::remove_path(&temp);
         last_error = Some(anyhow::anyhow!(
             "source changed while copying {}",
             source.display()
@@ -319,9 +319,9 @@ fn copy_regular_stable(source: &Path, destination: &Path) -> Result<()> {
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("copy retry failed")))
 }
 
-fn copy_regular_once(source: &Path, destination: &Path) -> Result<()> {
+fn copy_regular_to_temp(source: &Path, destination: &Path) -> Result<std::path::PathBuf> {
     let temp = public::temp_path(destination);
-    let _ = fs::remove_file(&temp);
+    let _ = public::remove_path(&temp);
     {
         let mut input = File::open(source).with_context(|| format!("open {}", source.display()))?;
         let mut output = OpenOptions::new()
@@ -335,9 +335,7 @@ fn copy_regular_once(source: &Path, destination: &Path) -> Result<()> {
             .sync_all()
             .with_context(|| format!("fsync {}", temp.display()))?;
     }
-    fs::rename(&temp, destination)
-        .with_context(|| format!("publish {} to {}", temp.display(), destination.display()))?;
-    fsync_parent(destination)
+    Ok(temp)
 }
 
 fn copy_sparse(input: &mut File, output: &mut File) -> Result<()> {
@@ -402,10 +400,55 @@ fn copy_range(input: &mut File, output: &mut File, start: u64, len: u64) -> Resu
 
 fn symlink_atomic(target: &OsStr, destination: &Path) -> Result<()> {
     let temp = public::temp_path(destination);
-    let _ = fs::remove_file(&temp);
+    let _ = public::remove_path(&temp);
     symlink(target, &temp).with_context(|| format!("symlink {}", temp.display()))?;
-    fs::rename(&temp, destination)
-        .with_context(|| format!("publish {} to {}", temp.display(), destination.display()))
+    publish_temp(&temp, destination)
+}
+
+fn ensure_directory_destination(destination: &Path) -> Result<()> {
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_dir() => Ok(()),
+        Ok(_) => {
+            public::remove_path(destination)?;
+            fs::create_dir_all(destination)
+                .with_context(|| format!("create dir {}", destination.display()))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir_all(destination)
+                .with_context(|| format!("create dir {}", destination.display()))
+        }
+        Err(error) => Err(error).with_context(|| format!("stat {}", destination.display())),
+    }
+}
+
+fn make_fifo_atomic(destination: &Path, mode: u32) -> Result<()> {
+    let temp = public::temp_path(destination);
+    let _ = public::remove_path(&temp);
+    make_fifo(&temp, mode)?;
+    publish_temp(&temp, destination)
+}
+
+fn make_device_atomic(destination: &Path, facts: &FsFacts) -> Result<()> {
+    let temp = public::temp_path(destination);
+    let _ = public::remove_path(&temp);
+    make_device(&temp, facts)?;
+    publish_temp(&temp, destination)
+}
+
+fn publish_temp(temp: &Path, destination: &Path) -> Result<()> {
+    remove_directory_destination(destination)?;
+    fs::rename(temp, destination)
+        .with_context(|| format!("publish {} to {}", temp.display(), destination.display()))?;
+    fsync_parent(destination)
+}
+
+fn remove_directory_destination(destination: &Path) -> Result<()> {
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.file_type().is_dir() => public::remove_path(destination),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("stat {}", destination.display())),
+    }
 }
 
 fn make_fifo(path: &Path, mode: u32) -> Result<()> {

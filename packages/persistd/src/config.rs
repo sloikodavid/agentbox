@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -38,7 +38,6 @@ impl Default for Config {
                 "/etc/hostname".into(),
                 "/etc/hosts".into(),
                 "/etc/resolv.conf".into(),
-                "/home/user/.local/share/code-server".into(),
             ],
             audit: AuditConfig {
                 max_work_ms_per_tick: 10,
@@ -50,12 +49,29 @@ impl Default for Config {
     }
 }
 
+impl Config {
+    pub fn validate(&self) -> Result<()> {
+        for exclusion in &self.exclusions {
+            validate_exclusion(exclusion)
+                .with_context(|| format!("invalid exclusion {exclusion:?}"))?;
+        }
+        Ok(())
+    }
+}
+
 pub fn load_or_create(path: &Path) -> Result<Config> {
     match fs::read(path) {
-        Ok(data) => serde_json::from_slice(&data)
-            .with_context(|| format!("parse config {}", path.display())),
+        Ok(data) => {
+            let config: Config = serde_json::from_slice(&data)
+                .with_context(|| format!("parse config {}", path.display()))?;
+            config
+                .validate()
+                .with_context(|| format!("validate config {}", path.display()))?;
+            Ok(config)
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             let config = Config::default();
+            config.validate().context("validate default config")?;
             write(path, &config)?;
             Ok(config)
         }
@@ -92,9 +108,36 @@ fn write(path: &Path, config: &Config) -> Result<()> {
         .with_context(|| format!("fsync {}", parent.display()))
 }
 
+fn validate_exclusion(value: &str) -> Result<()> {
+    let bytes = value.as_bytes();
+    if bytes.first() != Some(&b'/') {
+        bail!("path must be absolute");
+    }
+    if bytes.contains(&0) {
+        bail!("path contains NUL");
+    }
+
+    let mut has_component = false;
+    for component in bytes.split(|byte| *byte == b'/') {
+        if component.is_empty() || component == b"." {
+            continue;
+        }
+        if component == b".." {
+            bail!("path cannot contain '..'");
+        }
+        has_component = true;
+    }
+
+    if !has_component {
+        bail!("root path cannot be excluded");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Config, load_or_create};
+    use std::fs;
 
     #[test]
     fn load_or_create_writes_default_config() {
@@ -107,5 +150,19 @@ mod tests {
         assert!(path.exists());
         let reparsed = load_or_create(&path).unwrap();
         assert_eq!(reparsed, Config::default());
+    }
+
+    #[test]
+    fn load_or_create_rejects_invalid_exclusions() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("persistd/config.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut config = Config::default();
+        config.exclusions.push("relative".into());
+        fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+
+        let error = load_or_create(&path).unwrap_err().to_string();
+
+        assert!(error.contains("validate config"));
     }
 }

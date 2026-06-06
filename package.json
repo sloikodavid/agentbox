@@ -7,7 +7,7 @@
 	"packageManager": "pnpm@11.0.9",
 	"scripts": {
 		"dev": "docker compose up --build",
-		"check": "node scripts/check.mjs",
+		"check": "tsc --noEmit && vitest run --coverage && eslint . && node scripts/check-rust.mjs && node scripts/format.mjs --check && pnpm dlx --package renovate renovate-config-validator renovate.json",
 		"fix": "node scripts/format.mjs --write && eslint . --fix"
 	},
 	"prettier": {

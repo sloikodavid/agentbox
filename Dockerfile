@@ -1,5 +1,10 @@
+# Node major is pinned by code-server (engines + VS Code remote/.npmrc target), whose
+# native modules are built for this ABI. The builder and runtime must share it, so it
+# lives in one ARG; bump both together when code-server moves to a new Node major.
+ARG NODE_IMAGE=node:22-trixie-slim@sha256:e637ac91fb4f2f40761d217c5d48c41a05edf0b65eb9c34e72c27cce55af9e65
+
 # Build patched code-server from source.
-FROM node:22-trixie-slim@sha256:e637ac91fb4f2f40761d217c5d48c41a05edf0b65eb9c34e72c27cce55af9e65 AS code-server-builder
+FROM ${NODE_IMAGE} AS code-server-builder
 
 # renovate: datasource=custom.code-server-tags depName=coder/code-server versioning=semver
 ARG CODE_SERVER_VERSION=4.118.0
@@ -63,19 +68,26 @@ RUN XDG_CONFIG_HOME=/tmp/code-server-config /src/code-server/release/bin/code-se
     > /src/code-server/release/.agentbox-upstream \
   && rm -rf /tmp/code-server.version.json /tmp/code-server-config
 
-# Build persistd.
-FROM rust:1.95.0-trixie AS persistd-builder
+# Build persistd. cargo-chef caches the dependency compile so source-only edits skip it.
+FROM rust:1.96.0-slim-trixie@sha256:26abcef3d79b8d890c4ceb17093154573e1f6479cf6dd7c1450043b8458350f6 AS persistd-chef
+# renovate: datasource=crate depName=cargo-chef
+ARG CARGO_CHEF_VERSION=0.1.77
+RUN cargo install cargo-chef --version "${CARGO_CHEF_VERSION}" --locked
+WORKDIR /src/persistd
 
-WORKDIR /src
+FROM persistd-chef AS persistd-planner
+COPY packages/persistd/ .
+RUN cargo chef prepare --recipe-path /recipe.json
 
-COPY packages/persistd/ packages/persistd/
-
-RUN cargo build --release --locked --manifest-path packages/persistd/Cargo.toml --bin persistd \
-  && mkdir -p /out \
-  && cp packages/persistd/target/release/persistd /out/persistd
+FROM persistd-chef AS persistd-builder
+COPY --from=persistd-planner /recipe.json /recipe.json
+RUN cargo chef cook --release --recipe-path /recipe.json
+COPY packages/persistd/ .
+RUN cargo build --release --locked --bin persistd \
+  && install -D target/release/persistd /out/persistd
 
 # Assemble the runtime image.
-FROM node:26.1.0-trixie-slim@sha256:424cafd2a035ed2b2d74acc3142b68b426fb62a47742c80a75e7117db02d6b30 AS runtime
+FROM ${NODE_IMAGE} AS runtime
 
 ARG AGENTBOX_BUILD_VERSION=unknown
 ARG AGENTBOX_BUILD_REVISION=unknown
@@ -104,6 +116,8 @@ ENV AGENTBOX_BUILD_VERSION="${AGENTBOX_BUILD_VERSION}" \
   LC_ALL="C.UTF-8" \
   VISUAL="code --wait"
 
+# APT lists are kept (not deleted) so `sudo apt install` works out of the box in this
+# VPS-like appliance; `apt update` refreshes them, and persistd persists any changes.
 RUN apt-get update \
   && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     bash \
@@ -130,8 +144,7 @@ RUN apt-get update \
     xdg-user-dirs \
     xdg-utils \
     xz-utils \
-    zip \
-  && rm -rf /var/lib/apt/lists/*
+    zip
 
 RUN npm install --global \
     "bun@${BUN_VERSION}" \
@@ -146,9 +159,8 @@ COPY --from=code-server-builder /src/code-server/release /opt/code-server/curren
 COPY --from=persistd-builder /out/persistd /opt/persistd/bin/persistd
 COPY rootfs/ /
 
-RUN find / -xdev -name .gitkeep -type f -delete \
+RUN find /home/user -name .gitkeep -type f -delete \
   && mkdir -p /data \
-  && mkdir -p /opt/persistd \
   && chown -R user:user /home/user \
   && chmod 0440 /etc/sudoers.d/user \
   && chmod +x /opt/agentbox/entrypoint.sh \
@@ -159,5 +171,12 @@ RUN find / -xdev -name .gitkeep -type f -delete \
   && update-mime-database /usr/share/mime \
   && /opt/persistd/bin/persistd __generate-baseline --root / --output /opt/persistd/baseline.sqlite
 
+# No USER directive: persistd needs root to rebuild the filesystem on boot; supervisor
+# drops to the unprivileged `user` for code-server. Root is intentional.
 EXPOSE 8080
+
+# Liveness against code-server's auth-exempt /healthz; ${PORT:-8080} follows a PORT override.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
+  CMD curl -fsS "http://localhost:${PORT:-8080}/healthz" > /dev/null || exit 1
+
 ENTRYPOINT ["/opt/agentbox/entrypoint.sh"]

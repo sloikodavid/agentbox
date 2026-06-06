@@ -69,9 +69,6 @@ fn apply_changed_entry(root: &Path, public_path: &PublicPath, changed_path: &Pat
     if matches!(source_facts.kind, FileKind::Dir) {
         match fs::symlink_metadata(&target) {
             Ok(metadata) if metadata.file_type().is_dir() => {}
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                anyhow::bail!("refusing to replace symlink ancestor {}", target.display());
-            }
             Ok(_) => {
                 public::remove_path(&target)?;
                 fs::create_dir_all(&target)
@@ -359,18 +356,20 @@ mod tests {
     }
 
     #[test]
-    fn apply_refuses_symlink_ancestor_escape() {
+    fn apply_replaces_symlink_with_changed_directory() {
         let fixture = Fixture::new();
         fs::create_dir_all(fixture.paths.changed_dir.join("safe/link")).unwrap();
         fs::write(fixture.paths.changed_dir.join("safe/link/file"), "nope").unwrap();
         fs::create_dir_all(fixture.root.join("safe")).unwrap();
         symlink("/tmp", fixture.root.join("safe/link")).unwrap();
 
-        let error = apply_public_truth(&fixture.root, &fixture.paths, &Config::default())
-            .unwrap_err()
-            .to_string();
+        apply_public_truth(&fixture.root, &fixture.paths, &Config::default()).unwrap();
 
-        assert!(error.contains("symlink ancestor"));
+        assert!(fixture.root.join("safe/link").is_dir());
+        assert_eq!(
+            fs::read_to_string(fixture.root.join("safe/link/file")).unwrap(),
+            "nope"
+        );
     }
 
     #[test]

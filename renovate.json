@@ -71,6 +71,13 @@
 			],
 			"datasourceTemplate": "custom.code-server-linux-arm64",
 			"autoReplaceStringTemplate": "# renovate: datasource=custom.code-server-linux-arm64 depName={{{depName}}} versioning=semver\n# code-server-linux-arm64 version={{{newValue}}}\nARG CODE_SERVER_SHA256_ARM64={{{newDigest}}}"
+		},
+		{
+			"customType": "regex",
+			"managerFilePatterns": ["/^Dockerfile$/"],
+			"matchStrings": [
+				"#\\s*renovate:\\s*datasource=(?<datasource>npm|crate)\\s+depName=(?<depName>\\S+)\\s*\\n\\s*ARG\\s+\\S+=(?<currentValue>\\S+)"
+			]
 		}
 	],
 	"customDatasources": {
