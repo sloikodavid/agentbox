@@ -320,17 +320,17 @@ assert_persistd_applies_changes() {
   docker exec "$CONTAINER_NAME" sh -lc 'test -d /foo123'
 
   log "checking image-file deletion and tombstone removal"
-  docker exec "$CONTAINER_NAME" sh -lc 'rm /usr/share/applications/composery.desktop'
-  wait_for_container_file /data/persistd/removed/usr/share/applications/composery.desktop
+  docker exec "$CONTAINER_NAME" sh -lc 'rm /usr/share/applications/composery-text-editor.desktop'
+  wait_for_container_file /data/persistd/removed/usr/share/applications/composery-text-editor.desktop
   docker rm -f "$CONTAINER_NAME" >/dev/null
   run_default_container
   wait_for_url "$SMOKE_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
-  docker exec "$CONTAINER_NAME" sh -lc 'test ! -e /usr/share/applications/composery.desktop'
-  docker exec "$CONTAINER_NAME" sh -lc 'rm -f /data/persistd/removed/usr/share/applications/composery.desktop'
+  docker exec "$CONTAINER_NAME" sh -lc 'test ! -e /usr/share/applications/composery-text-editor.desktop'
+  docker exec "$CONTAINER_NAME" sh -lc 'rm -f /data/persistd/removed/usr/share/applications/composery-text-editor.desktop'
   docker rm -f "$CONTAINER_NAME" >/dev/null
   run_default_container
   wait_for_url "$SMOKE_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
-  docker exec "$CONTAINER_NAME" sh -lc 'test -f /usr/share/applications/composery.desktop'
+  docker exec "$CONTAINER_NAME" sh -lc 'test -f /usr/share/applications/composery-text-editor.desktop'
 
   log "checking baseline-equal changes do not remain in changed"
   docker exec "$CONTAINER_NAME" sh -lc 'cp /etc/mailcap /tmp/mailcap.baseline && printf changed > /etc/mailcap'

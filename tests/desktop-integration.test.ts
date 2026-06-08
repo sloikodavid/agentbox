@@ -38,7 +38,9 @@ function parseMimeDefaults(content: string): Map<string, string> {
 describe("desktop URL and text editor integration", () => {
 	test("uses a dedicated URL handler for HTTP links", () => {
 		const entry = parseDesktopEntry(
-			readRepoFile("rootfs/usr/share/applications/composery-url-handler.desktop")
+			readRepoFile(
+				"rootfs/usr/share/applications/composery-url-handler.desktop"
+			)
 		);
 
 		expect(entry.get("GenericName")).toBe("URL Handler");
@@ -59,7 +61,9 @@ describe("desktop URL and text editor integration", () => {
 			"rootfs/usr/share/applications/composery-text-editor.desktop"
 		);
 		const entry = parseDesktopEntry(
-			readRepoFile("rootfs/usr/share/applications/composery-text-editor.desktop")
+			readRepoFile(
+				"rootfs/usr/share/applications/composery-text-editor.desktop"
+			)
 		);
 
 		expect(existsSync(oldPath)).toBe(false);

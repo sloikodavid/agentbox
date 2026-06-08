@@ -80,7 +80,6 @@ fn apply_changed_entry(root: &Path, public_path: &PublicPath, changed_path: &Pat
             }
             Err(error) => return Err(error).with_context(|| format!("stat {}", target.display())),
         }
-        rootfs::apply_facts(&target, &source_facts)?;
     } else {
         rootfs::copy_entry_atomic(changed_path, &target)?;
     }
@@ -223,7 +222,10 @@ mod tests {
         paths::Paths,
         public::PublicPath,
     };
-    use std::{fs, os::unix::fs::symlink};
+    use std::{
+        fs,
+        os::unix::fs::{PermissionsExt, symlink},
+    };
 
     #[test]
     fn apply_removes_then_restores_changed_file_so_changed_wins() {
@@ -260,7 +262,9 @@ mod tests {
         fs::create_dir_all(fixture.root.join("usr/share/applications")).unwrap();
         fs::write(fixture.root.join("usr/bin/supervisord"), "supervisor").unwrap();
         fs::write(
-            fixture.root.join("usr/share/applications/composery.desktop"),
+            fixture
+                .root
+                .join("usr/share/applications/composery-text-editor.desktop"),
             "desktop",
         )
         .unwrap();
@@ -269,7 +273,7 @@ mod tests {
             fixture
                 .paths
                 .removed_dir
-                .join("usr/share/applications/composery.desktop"),
+                .join("usr/share/applications/composery-text-editor.desktop"),
             "",
         )
         .unwrap();
@@ -280,7 +284,7 @@ mod tests {
         assert!(
             !fixture
                 .root
-                .join("usr/share/applications/composery.desktop")
+                .join("usr/share/applications/composery-text-editor.desktop")
                 .exists()
         );
     }
@@ -301,6 +305,87 @@ mod tests {
         assert_eq!(
             fs::read_link(fixture.root.join("link")).unwrap(),
             std::path::PathBuf::from("/dir/file")
+        );
+    }
+
+    #[test]
+    fn apply_restores_empty_changed_directory() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.paths.changed_dir.join("empty")).unwrap();
+
+        apply_public_truth(&fixture.root, &fixture.paths, &Config::default()).unwrap();
+
+        assert!(fixture.root.join("empty").is_dir());
+    }
+
+    #[test]
+    fn apply_uses_metadata_for_changed_directory_facts() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.paths.changed_dir.join("empty")).unwrap();
+        let public_path = PublicPath::parse("/empty").unwrap();
+        let mut record = MetadataRecord {
+            version: 1,
+            path: String::new(),
+            path_bytes_b64: None,
+            kind: "dir".into(),
+            mode: Some(0o700),
+            uid: None,
+            gid: None,
+            mtime_ns: None,
+            symlink_target: None,
+            symlink_target_bytes_b64: None,
+            rdev_major: None,
+            rdev_minor: None,
+            hardlink_key: None,
+            xattrs: None,
+            acl: None,
+            capability: None,
+        };
+        record.set_public_path(&public_path);
+        metadata::upsert(&fixture.paths.metadata_file, record).unwrap();
+
+        apply_public_truth(&fixture.root, &fixture.paths, &Config::default()).unwrap();
+
+        assert_eq!(
+            fs::metadata(fixture.root.join("empty"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+    }
+
+    #[test]
+    fn apply_changed_file_does_not_apply_storage_parent_metadata() {
+        let fixture = Fixture::new();
+        let desktop = fixture.root.join("home/user/Desktop");
+        fs::create_dir_all(&desktop).unwrap();
+        fs::set_permissions(&desktop, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::create_dir_all(fixture.paths.changed_dir.join("home/user/Desktop")).unwrap();
+        fs::set_permissions(
+            fixture.paths.changed_dir.join("home/user/Desktop"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        fs::write(
+            fixture
+                .paths
+                .changed_dir
+                .join("home/user/Desktop/smoke.txt"),
+            "hello",
+        )
+        .unwrap();
+
+        apply_public_truth(&fixture.root, &fixture.paths, &Config::default()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(desktop.join("smoke.txt")).unwrap(),
+            "hello"
+        );
+        assert_eq!(
+            fs::metadata(desktop).unwrap().permissions().mode() & 0o777,
+            0o700
         );
     }
 

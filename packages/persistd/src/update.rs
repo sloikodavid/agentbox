@@ -64,13 +64,13 @@ pub fn update_public_path(
 
     match (live, baseline) {
         (None, Some(_)) => {
-            remove_changed(ctx.paths, public_path)?;
+            remove_changed_tree(ctx.paths, public_path)?;
             write_removed_marker(ctx.paths, public_path)?;
             metadata::remove(&ctx.paths.metadata_file, public_path)?;
             Ok(UpdateOutcome::PersistedRemoved)
         }
         (None, None) => {
-            remove_changed(ctx.paths, public_path)?;
+            remove_changed_tree(ctx.paths, public_path)?;
             remove_removed_marker(ctx.paths, public_path)?;
             metadata::remove(&ctx.paths.metadata_file, public_path)?;
             Ok(UpdateOutcome::Pruned)
@@ -79,13 +79,13 @@ pub fn update_public_path(
             let decision = compare_to_baseline(ctx, public_path, &live_path, &live, &record)?;
             match decision {
                 DeltaDecision::Equal => {
-                    remove_changed(ctx.paths, public_path)?;
+                    remove_changed_entry(ctx.paths, public_path)?;
                     remove_removed_marker(ctx.paths, public_path)?;
                     metadata::remove(&ctx.paths.metadata_file, public_path)?;
                     Ok(UpdateOutcome::Pruned)
                 }
                 DeltaDecision::MetadataOnly => {
-                    remove_changed(ctx.paths, public_path)?;
+                    remove_changed_entry(ctx.paths, public_path)?;
                     remove_removed_marker(ctx.paths, public_path)?;
                     metadata::upsert(
                         &ctx.paths.metadata_file,
@@ -291,7 +291,7 @@ fn persist_changed(
 }
 
 fn metadata_record_needed(live: &FsFacts) -> bool {
-    live.nlink > 1 && matches!(live.kind, FileKind::File)
+    matches!(live.kind, FileKind::Dir) || (live.nlink > 1 && matches!(live.kind, FileKind::File))
 }
 
 fn hardlink_key(live: &FsFacts) -> Option<String> {
@@ -335,7 +335,28 @@ fn metadata_record(public_path: &PublicPath, live: &FsFacts) -> Result<MetadataR
     Ok(record)
 }
 
-fn remove_changed(paths: &Paths, public_path: &PublicPath) -> Result<()> {
+fn remove_changed_entry(paths: &Paths, public_path: &PublicPath) -> Result<()> {
+    let path = public_path.destination(&paths.changed_dir);
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_dir() => match fs::remove_dir(&path) {
+            Ok(()) => Ok(()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty
+                ) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error).with_context(|| format!("remove dir {}", path.display())),
+        },
+        Ok(_) => fs::remove_file(&path).with_context(|| format!("remove file {}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("stat {}", path.display())),
+    }
+}
+
+fn remove_changed_tree(paths: &Paths, public_path: &PublicPath) -> Result<()> {
     public::remove_path(&public_path.destination(&paths.changed_dir))
 }
 
@@ -482,6 +503,27 @@ mod tests {
     }
 
     #[test]
+    fn missing_baseline_directory_removes_changed_subtree_and_creates_removed_marker() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.paths.changed_dir.join("home/user/Desktop")).unwrap();
+        fs::write(
+            fixture
+                .paths
+                .changed_dir
+                .join("home/user/Desktop/smoke.txt"),
+            "stale",
+        )
+        .unwrap();
+        fs::remove_dir_all(fixture.root.join("home/user/Desktop")).unwrap();
+
+        let outcome = update_path(&fixture.ctx(), "/home/user/Desktop").unwrap();
+
+        assert_eq!(outcome, UpdateOutcome::PersistedRemoved);
+        assert!(!fixture.paths.changed_dir.join("home/user/Desktop").exists());
+        assert!(fixture.paths.removed_dir.join("home/user/Desktop").exists());
+    }
+
+    #[test]
     fn missing_new_file_prunes_without_tombstone() {
         let fixture = Fixture::new();
         fs::create_dir_all(fixture.paths.changed_dir.join("workspace")).unwrap();
@@ -495,6 +537,23 @@ mod tests {
     }
 
     #[test]
+    fn missing_new_directory_prunes_changed_subtree_without_tombstone() {
+        let fixture = Fixture::new();
+        fs::create_dir_all(fixture.paths.changed_dir.join("workspace/new-dir")).unwrap();
+        fs::write(
+            fixture.paths.changed_dir.join("workspace/new-dir/file.txt"),
+            "stale",
+        )
+        .unwrap();
+
+        let outcome = update_path(&fixture.ctx(), "/workspace/new-dir").unwrap();
+
+        assert_eq!(outcome, UpdateOutcome::Pruned);
+        assert!(!fixture.paths.changed_dir.join("workspace/new-dir").exists());
+        assert!(!fixture.paths.removed_dir.join("workspace/new-dir").exists());
+    }
+
+    #[test]
     fn new_file_is_captured() {
         let fixture = Fixture::new();
         fs::write(fixture.root.join("new.txt"), "new").unwrap();
@@ -505,6 +564,42 @@ mod tests {
         assert_eq!(
             fs::read_to_string(fixture.paths.changed_dir.join("new.txt")).unwrap(),
             "new"
+        );
+    }
+
+    #[test]
+    fn new_directory_is_captured_with_metadata() {
+        let fixture = Fixture::new();
+        fs::create_dir(fixture.root.join("new-dir")).unwrap();
+
+        let outcome = update_path(&fixture.ctx(), "/new-dir").unwrap();
+
+        assert_eq!(outcome, UpdateOutcome::PersistedChanged);
+        assert!(fixture.paths.changed_dir.join("new-dir").is_dir());
+        let records = crate::metadata::load(&fixture.paths.metadata_file).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].public_path().unwrap().as_bytes(), b"/new-dir");
+        assert_eq!(records[0].kind, "dir");
+    }
+
+    #[test]
+    fn parent_directory_metadata_update_keeps_changed_children() {
+        let fixture = Fixture::new();
+        fs::write(fixture.root.join("home/user/Desktop/smoke.txt"), "hello").unwrap();
+
+        update_path(&fixture.ctx(), "/home/user/Desktop/smoke.txt").unwrap();
+        let outcome = update_path(&fixture.ctx(), "/home/user/Desktop").unwrap();
+
+        assert_eq!(outcome, UpdateOutcome::PersistedMetadata);
+        assert_eq!(
+            fs::read_to_string(
+                fixture
+                    .paths
+                    .changed_dir
+                    .join("home/user/Desktop/smoke.txt")
+            )
+            .unwrap(),
+            "hello"
         );
     }
 
@@ -612,6 +707,7 @@ mod tests {
             let baseline = opt.join("baseline.sqlite");
 
             fs::create_dir_all(root.join("etc")).unwrap();
+            fs::create_dir_all(root.join("home/user/Desktop")).unwrap();
             fs::create_dir_all(&opt).unwrap();
             fs::write(root.join("etc/hello.txt"), "hello").unwrap();
             symlink("/etc/hello.txt", root.join("etc/hello-link")).unwrap();

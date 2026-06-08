@@ -22,10 +22,10 @@ Use [hosting/caddy-compose](../hosting/caddy-compose/) for this setup.
 | Target                                | Status            | Notes                                                                                                                                                                  |
 | ------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Docker Compose on one VPS             | Supported         | Best default for indie/self-hosted use. Use the Caddy example for HTTPS.                                                                                               |
-| Hetzner CX/CPX VPS                    | Production target | This is the production cloud target in (Composery Cloud)[https://composery.io/pricing].                                                                                                               |
+| Hetzner CX/CPX VPS                    | Production target | This is the production cloud target in (Composery Cloud)[https://composery.io/pricing].                                                                                |
 | DigitalOcean Droplet or similar VPS   | Supported         | Same Compose/Caddy shape as Hetzner.                                                                                                                                   |
 | Railway, Render, Fly, or similar PaaS | Supported         | Mount a writable persistent disk at `/data`, run a single instance per volume, and check `persistd status --json` after boot. Provider-specific setup is still manual. |
-| Kubernetes                            | Manual            | Use one replica, a PVC mounted at `/data`, and an ingress/proxy. Do not scale one Composery instance horizontally against the same PVC.                                 |
+| Kubernetes                            | Manual            | Use one replica, a PVC mounted at `/data`, and an ingress/proxy. Do not scale one Composery instance horizontally against the same PVC.                                |
 
 ## Provider Notes
 
