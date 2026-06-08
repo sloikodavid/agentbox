@@ -108,7 +108,7 @@ fetch_text() {
 }
 
 # Authenticated HTTP helpers.
-login_agentbox() {
+login_composery() {
   local base_url="$1"
   local cookie_jar="$2"
   rm -f "$cookie_jar"
@@ -253,7 +253,7 @@ assert_web_app_smoke() {
 
   local cookie_jar
   cookie_jar="$(mktemp)"
-  login_agentbox "http://127.0.0.1:${SMOKE_PORT}" "$cookie_jar"
+  login_composery "http://127.0.0.1:${SMOKE_PORT}" "$cookie_jar"
 
   local root_page
   root_page="$(fetch_authed_text "http://127.0.0.1:${SMOKE_PORT}/" "$SMOKE_READINESS_ATTEMPTS" "$cookie_jar")"
@@ -320,17 +320,17 @@ assert_persistd_applies_changes() {
   docker exec "$CONTAINER_NAME" sh -lc 'test -d /foo123'
 
   log "checking image-file deletion and tombstone removal"
-  docker exec "$CONTAINER_NAME" sh -lc 'rm /usr/share/applications/agentbox.desktop'
-  wait_for_container_file /data/persistd/removed/usr/share/applications/agentbox.desktop
+  docker exec "$CONTAINER_NAME" sh -lc 'rm /usr/share/applications/composery.desktop'
+  wait_for_container_file /data/persistd/removed/usr/share/applications/composery.desktop
   docker rm -f "$CONTAINER_NAME" >/dev/null
   run_default_container
   wait_for_url "$SMOKE_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
-  docker exec "$CONTAINER_NAME" sh -lc 'test ! -e /usr/share/applications/agentbox.desktop'
-  docker exec "$CONTAINER_NAME" sh -lc 'rm -f /data/persistd/removed/usr/share/applications/agentbox.desktop'
+  docker exec "$CONTAINER_NAME" sh -lc 'test ! -e /usr/share/applications/composery.desktop'
+  docker exec "$CONTAINER_NAME" sh -lc 'rm -f /data/persistd/removed/usr/share/applications/composery.desktop'
   docker rm -f "$CONTAINER_NAME" >/dev/null
   run_default_container
   wait_for_url "$SMOKE_READINESS_URL" "$SMOKE_READINESS_ATTEMPTS"
-  docker exec "$CONTAINER_NAME" sh -lc 'test -f /usr/share/applications/agentbox.desktop'
+  docker exec "$CONTAINER_NAME" sh -lc 'test -f /usr/share/applications/composery.desktop'
 
   log "checking baseline-equal changes do not remain in changed"
   docker exec "$CONTAINER_NAME" sh -lc 'cp /etc/mailcap /tmp/mailcap.baseline && printf changed > /etc/mailcap'

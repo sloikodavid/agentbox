@@ -1,6 +1,6 @@
 # Release
 
-Agentbox releases are Docker image releases published to GHCR.
+Composery releases are Docker image releases published to GHCR.
 
 GitHub always shows a **Use workflow from** dropdown when manually running a workflow. Leave it set to `main`. That dropdown chooses which branch's workflow file to run.
 
@@ -21,8 +21,8 @@ Preview releases are for testing a branch or exact commit without publishing `la
 
 A preview release publishes:
 
-- `ghcr.io/sloikodavid/agentbox:preview-<ref>`.
-- `ghcr.io/sloikodavid/agentbox:sha-<short-sha>`.
+- `ghcr.io/sloikodavid/composery:preview-<ref>`.
+- `ghcr.io/sloikodavid/composery:sha-<short-sha>`.
 
 The `preview-<ref>` tag is mutable: running another preview release for the same branch overwrites it. The `sha-<short-sha>` tag points to the exact commit that was built.
 
@@ -42,10 +42,10 @@ The workflow verifies that it is building the current `main`, reads `package.jso
 
 A stable release publishes:
 
-- `ghcr.io/sloikodavid/agentbox:<version>`.
-- `ghcr.io/sloikodavid/agentbox:<major>.<minor>`.
-- `ghcr.io/sloikodavid/agentbox:latest`.
-- `ghcr.io/sloikodavid/agentbox:sha-<short-sha>`.
+- `ghcr.io/sloikodavid/composery:<version>`.
+- `ghcr.io/sloikodavid/composery:<major>.<minor>`.
+- `ghcr.io/sloikodavid/composery:latest`.
+- `ghcr.io/sloikodavid/composery:sha-<short-sha>`.
 
 Release images are scanned with Trivy and fail on `CRITICAL` or `HIGH` vulnerabilities.
 

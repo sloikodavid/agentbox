@@ -14,7 +14,7 @@
 		"verbatimModuleSyntax": true
 	},
 	"include": [
-		"rootfs/opt/agentbox/**/*.ts",
+		"rootfs/opt/composery/**/*.ts",
 		"tests/**/*.ts",
 		"vitest.config.ts"
 	]

@@ -34,7 +34,7 @@ jobs:
       - name: Plan release
         id: plan
         env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/agentbox
+          IMAGE: ghcr.io/${{ github.repository_owner }}/composery
           REF_INPUT: ${{ inputs.ref }}
         run: |
           set -euo pipefail
@@ -115,7 +115,7 @@ jobs:
           push: true
           tags: ${{ steps.plan.outputs.tags }}
           labels: |
-            org.opencontainers.image.title=Agentbox
+            org.opencontainers.image.title=Composery
             org.opencontainers.image.description=A persistent VPS-like Linux appliance with code-server in the browser.
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ steps.plan.outputs.sha }}
@@ -124,13 +124,13 @@ jobs:
           sbom: true
           provenance: true
           build-args: |
-            AGENTBOX_BUILD_VERSION=${{ steps.plan.outputs.build_version }}
-            AGENTBOX_BUILD_REVISION=${{ steps.plan.outputs.sha }}
-            AGENTBOX_BUILD_SOURCE=${{ github.server_url }}/${{ github.repository }}
+            COMPOSERY_BUILD_VERSION=${{ steps.plan.outputs.build_version }}
+            COMPOSERY_BUILD_REVISION=${{ steps.plan.outputs.sha }}
+            COMPOSERY_BUILD_SOURCE=${{ github.server_url }}/${{ github.repository }}
 
       - uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
-          image-ref: ghcr.io/${{ github.repository_owner }}/agentbox@${{ steps.build.outputs.digest }}
+          image-ref: ghcr.io/${{ github.repository_owner }}/composery@${{ steps.build.outputs.digest }}
           format: sarif
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
@@ -143,7 +143,7 @@ jobs:
 
       - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/agentbox
+          subject-name: ghcr.io/${{ github.repository_owner }}/composery
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
@@ -154,5 +154,5 @@ jobs:
           target_commitish: ${{ steps.plan.outputs.sha }}
           generate_release_notes: true
           body: |
-            Image: `ghcr.io/${{ github.repository_owner }}/agentbox:${{ steps.plan.outputs.version }}`
+            Image: `ghcr.io/${{ github.repository_owner }}/composery:${{ steps.plan.outputs.version }}`
             Digest: `${{ steps.build.outputs.digest }}`

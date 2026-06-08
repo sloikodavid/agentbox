@@ -1,4 +1,4 @@
 example.com {
 	encode gzip
-	reverse_proxy agentbox:8080
+	reverse_proxy composery:8080
 }

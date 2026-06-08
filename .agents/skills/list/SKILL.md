@@ -77,7 +77,7 @@ rootfs/
       user
     supervisor/
       conf.d/
-        agentbox.conf
+        composery.conf
       supervisord.conf
     xdg/
       mimeapps.list
@@ -109,14 +109,14 @@ rootfs/
         .gitkeep
       .bashrc
   opt/
-    agentbox/
+    composery/
       code-server.sh
       entrypoint.sh
   usr/
     share/
       applications/
-        agentbox-text-editor.desktop
-        agentbox-url-handler.desktop
+        composery-text-editor.desktop
+        composery-url-handler.desktop
 scripts/
   check-rust.mjs
   format.mjs

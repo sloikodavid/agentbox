@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Agentbox
+Name=Composery
 GenericName=Text Editor
-Comment=Edit files in Agentbox
+Comment=Edit files in Composery
 Exec=code --reuse-window %F
 Terminal=false
 NoDisplay=true

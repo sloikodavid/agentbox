@@ -260,7 +260,7 @@ mod tests {
         fs::create_dir_all(fixture.root.join("usr/share/applications")).unwrap();
         fs::write(fixture.root.join("usr/bin/supervisord"), "supervisor").unwrap();
         fs::write(
-            fixture.root.join("usr/share/applications/agentbox.desktop"),
+            fixture.root.join("usr/share/applications/composery.desktop"),
             "desktop",
         )
         .unwrap();
@@ -269,7 +269,7 @@ mod tests {
             fixture
                 .paths
                 .removed_dir
-                .join("usr/share/applications/agentbox.desktop"),
+                .join("usr/share/applications/composery.desktop"),
             "",
         )
         .unwrap();
@@ -280,7 +280,7 @@ mod tests {
         assert!(
             !fixture
                 .root
-                .join("usr/share/applications/agentbox.desktop")
+                .join("usr/share/applications/composery.desktop")
                 .exists()
         );
     }

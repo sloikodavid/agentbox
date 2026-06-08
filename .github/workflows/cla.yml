@@ -18,10 +18,10 @@ permissions:
 
 jobs:
   cla:
-    # Only run the CLA assistant for the canonical Agentbox repo and relevant events.
+    # Only run the CLA assistant for the canonical Composery repo and relevant events.
     # issue_comment events must be pull request comments; regular issue comments are ignored.
     if: |
-      github.repository == 'sloikodavid/agentbox' &&
+      github.repository == 'sloikodavid/composery' &&
       (
         (
           github.event_name == 'pull_request_target' &&
@@ -67,7 +67,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          path-to-document: https://github.com/sloikodavid/agentbox/blob/main/.github/CLA.md
+          path-to-document: https://github.com/sloikodavid/composery/blob/main/.github/CLA.md
           # Bump this signature file version whenever CLA.md changes materially.
           path-to-signatures: signatures/cla-v1.json
           branch: cla-signatures
@@ -76,7 +76,7 @@ jobs:
             Thanks for the contribution.
 
             Before this pull request can be merged, please read and sign the CLA:
-            https://github.com/sloikodavid/agentbox/blob/main/.github/CLA.md
+            https://github.com/sloikodavid/composery/blob/main/.github/CLA.md
 
             To sign, add the following as a comment on this pull request:
           custom-pr-sign-comment: ${{ env.SIGN_COMMENT }}

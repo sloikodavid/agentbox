@@ -1,15 +1,15 @@
 services:
-  agentbox:
+  composery:
     build:
       context: .
       args:
-        AGENTBOX_BUILD_REVISION: ${AGENTBOX_BUILD_REVISION:-unknown}
-        AGENTBOX_BUILD_SOURCE: ${AGENTBOX_BUILD_SOURCE:-https://github.com/sloikodavid/agentbox}
-        AGENTBOX_BUILD_VERSION: ${AGENTBOX_BUILD_VERSION:-unknown}
+        COMPOSERY_BUILD_REVISION: ${COMPOSERY_BUILD_REVISION:-unknown}
+        COMPOSERY_BUILD_SOURCE: ${COMPOSERY_BUILD_SOURCE:-https://github.com/sloikodavid/composery}
+        COMPOSERY_BUILD_VERSION: ${COMPOSERY_BUILD_VERSION:-unknown}
     ports:
       - "${PORT:-8080}:8080"
     volumes:
-      - agentbox_data:/data
+      - composery_data:/data
 
 volumes:
-  agentbox_data:
+  composery_data:

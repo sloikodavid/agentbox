@@ -10,20 +10,20 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
-      agentbox:
+      composery:
         condition: service_healthy
 
-  agentbox:
-    image: ghcr.io/sloikodavid/agentbox:latest
+  composery:
+    image: ghcr.io/sloikodavid/composery:latest
     restart: unless-stopped
     # environment:
     #   PASSWORD: "example"
     volumes:
-      - agentbox_data:/data
+      - composery_data:/data
     expose:
       - "8080"
 
 volumes:
-  agentbox_data:
+  composery_data:
   caddy_data:
   caddy_config:

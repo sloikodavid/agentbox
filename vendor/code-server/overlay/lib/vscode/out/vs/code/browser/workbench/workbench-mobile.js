@@ -8,9 +8,9 @@
 	let overlayBackGuardDisarming = false;
 	let horizontalPan = null;
 	let horizontalScrollbarDrag = null;
-	const modalEditorMobileAttribute = "data-agentbox-mobile-maximized";
+	const modalEditorMobileAttribute = "data-composery-mobile-maximized";
 	const modalEditorMaximizePendingAttribute =
-		"data-agentbox-mobile-maximize-pending";
+		"data-composery-mobile-maximize-pending";
 
 	const overlaySelectors = [
 		".monaco-menu-container",
@@ -90,14 +90,14 @@
 			return null;
 		}
 
-		let scrollbar = body.querySelector(":scope > .agentbox-keybindings-scrollbar");
+		let scrollbar = body.querySelector(":scope > .composery-keybindings-scrollbar");
 		if (scrollbar instanceof HTMLElement) {
 			return scrollbar;
 		}
 
 		scrollbar = document.createElement("div");
 		scrollbar.className =
-			"agentbox-keybindings-scrollbar scrollbar horizontal";
+			"composery-keybindings-scrollbar scrollbar horizontal";
 		scrollbar.setAttribute("role", "presentation");
 		scrollbar.setAttribute("aria-hidden", "true");
 
@@ -256,7 +256,7 @@
 		const overlay = activeOverlay();
 		if (overlay && !overlayBackGuardArmed) {
 			overlayBackGuardArmed = true;
-			history.pushState({ agentboxOverlayBackGuard: true }, "", location.href);
+			history.pushState({ composeryOverlayBackGuard: true }, "", location.href);
 			return;
 		}
 
@@ -265,7 +265,7 @@
 		}
 
 		overlayBackGuardArmed = false;
-		if (history.state?.agentboxOverlayBackGuard) {
+		if (history.state?.composeryOverlayBackGuard) {
 			overlayBackGuardDisarming = true;
 			history.back();
 		}
@@ -357,13 +357,13 @@
 		}
 
 		const slider = event.target.closest(
-			".agentbox-keybindings-scrollbar > .slider",
+			".composery-keybindings-scrollbar > .slider",
 		);
 		if (!(slider instanceof HTMLElement)) {
 			return;
 		}
 
-		const scrollbar = slider.closest(".agentbox-keybindings-scrollbar");
+		const scrollbar = slider.closest(".composery-keybindings-scrollbar");
 		const container = scrollbar?.parentElement?.querySelector(
 			`:scope > ${keybindingsTableContainerSelector}`,
 		);

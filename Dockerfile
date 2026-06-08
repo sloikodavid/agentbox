@@ -55,7 +55,7 @@ RUN npm run build \
   && VERSION="${CODE_SERVER_VERSION}" npm run build:vscode \
   && KEEP_MODULES=1 npm run release
 
-# Overlay Agentbox browser assets onto the built release.
+# Overlay Composery browser assets onto the built release.
 COPY vendor/code-server/overlay/ /src/code-server/release/
 RUN XDG_CONFIG_HOME=/tmp/code-server-config /src/code-server/release/bin/code-server --version --json > /tmp/code-server.version.json \
   && node -e 'const fs = require("node:fs"); const line = fs.readFileSync("/tmp/code-server.version.json", "utf8").split(/\n/).find((entry) => entry.trim().startsWith("{")); if (!line) { throw new Error("code-server version JSON was not found"); } const actual = JSON.parse(line); if (actual.codeServer !== process.argv[1] || actual.commit !== process.argv[2]) { throw new Error(`code-server version mismatch: ${JSON.stringify(actual)}`); }' \
@@ -65,7 +65,7 @@ RUN XDG_CONFIG_HOME=/tmp/code-server-config /src/code-server/release/bin/code-se
     "${CODE_SERVER_VERSION}" \
     "${CODE_SERVER_COMMIT}" \
     "${CODE_SERVER_REPOSITORY}" \
-    > /src/code-server/release/.agentbox-upstream \
+    > /src/code-server/release/.composery-upstream \
   && rm -rf /tmp/code-server.version.json /tmp/code-server-config
 
 # Build persistd. cargo-chef caches the dependency compile so source-only edits skip it.
@@ -89,15 +89,15 @@ RUN cargo build --release --locked --bin persistd \
 # Assemble the runtime image.
 FROM ${NODE_IMAGE} AS runtime
 
-ARG AGENTBOX_BUILD_VERSION=unknown
-ARG AGENTBOX_BUILD_REVISION=unknown
-ARG AGENTBOX_BUILD_SOURCE=https://github.com/sloikodavid/agentbox
+ARG COMPOSERY_BUILD_VERSION=unknown
+ARG COMPOSERY_BUILD_REVISION=unknown
+ARG COMPOSERY_BUILD_SOURCE=https://github.com/sloikodavid/composery
 
-LABEL org.opencontainers.image.title="Agentbox" \
+LABEL org.opencontainers.image.title="Composery" \
   org.opencontainers.image.description="A persistent VPS-like Linux appliance with code-server in the browser." \
-  org.opencontainers.image.source="${AGENTBOX_BUILD_SOURCE}" \
-  org.opencontainers.image.revision="${AGENTBOX_BUILD_REVISION}" \
-  org.opencontainers.image.version="${AGENTBOX_BUILD_VERSION}" \
+  org.opencontainers.image.source="${COMPOSERY_BUILD_SOURCE}" \
+  org.opencontainers.image.revision="${COMPOSERY_BUILD_REVISION}" \
+  org.opencontainers.image.version="${COMPOSERY_BUILD_VERSION}" \
   org.opencontainers.image.licenses="Apache-2.0"
 
 # renovate: datasource=npm depName=bun
@@ -105,9 +105,9 @@ ARG BUN_VERSION=1.3.13
 # renovate: datasource=npm depName=pnpm
 ARG PNPM_VERSION=11.0.9
 
-ENV AGENTBOX_BUILD_VERSION="${AGENTBOX_BUILD_VERSION}" \
-  AGENTBOX_BUILD_REVISION="${AGENTBOX_BUILD_REVISION}" \
-  AGENTBOX_BUILD_SOURCE="${AGENTBOX_BUILD_SOURCE}" \
+ENV COMPOSERY_BUILD_VERSION="${COMPOSERY_BUILD_VERSION}" \
+  COMPOSERY_BUILD_REVISION="${COMPOSERY_BUILD_REVISION}" \
+  COMPOSERY_BUILD_SOURCE="${COMPOSERY_BUILD_SOURCE}" \
   BROWSER="/opt/code-server/current/lib/vscode/bin/helpers/browser.sh" \
   EDITOR="code --wait" \
   GIT_EDITOR="code --wait" \
@@ -163,8 +163,8 @@ RUN find /home/user -name .gitkeep -type f -delete \
   && mkdir -p /data \
   && chown -R user:user /home/user \
   && chmod 0440 /etc/sudoers.d/user \
-  && chmod +x /opt/agentbox/entrypoint.sh \
-  && chmod +x /opt/agentbox/code-server.sh \
+  && chmod +x /opt/composery/entrypoint.sh \
+  && chmod +x /opt/composery/code-server.sh \
   && ln -sf /opt/code-server/current/lib/vscode/bin/remote-cli/code-server /usr/local/bin/code \
   && ln -sf /opt/code-server/current/bin/code-server /usr/local/bin/code-server \
   && update-desktop-database /usr/share/applications \
@@ -179,4 +179,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
   CMD curl -fsS "http://localhost:${PORT:-8080}/healthz" > /dev/null || exit 1
 
-ENTRYPOINT ["/opt/agentbox/entrypoint.sh"]
+ENTRYPOINT ["/opt/composery/entrypoint.sh"]

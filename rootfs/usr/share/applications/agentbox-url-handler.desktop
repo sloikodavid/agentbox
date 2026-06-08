@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Name=Agentbox
+Name=Composery
 GenericName=URL Handler
-Comment=Open web links from Agentbox
+Comment=Open web links from Composery
 Exec=/opt/code-server/current/lib/vscode/bin/helpers/browser.sh %U
 Terminal=false
 NoDisplay=true

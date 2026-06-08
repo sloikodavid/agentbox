@@ -9,7 +9,7 @@
 
 - Enable rulesets on GitHub.
 
-- Mirror the exact upstream release tarballs used by `Dockerfile` in a project-controlled location, such as an Agentbox GitHub release or GHCR artifact:
+- Mirror the exact upstream release tarballs used by `Dockerfile` in a project-controlled location, such as an Composery GitHub release or GHCR artifact:
   - `code-server-<version>-linux-amd64.tar.gz`.
   - `code-server-<version>-linux-arm64.tar.gz`.
 - Add CI automation to mirror new code-server assets after Renovate opens or merges a code-server update?

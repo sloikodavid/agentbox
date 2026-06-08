@@ -1,6 +1,6 @@
-# Agentbox
+# Composery
 
-Agentbox is a persistent, VPS-like Linux appliance with code-server in the browser.
+Composery is a persistent, VPS-like Linux appliance with code-server in the browser.
 It runs as one container, but `persistd` stores root filesystem changes on a single
 mounted `/data` volume so installed packages, edited config, CLI state, projects,
 and user files survive restarts and image upgrades.
@@ -21,7 +21,7 @@ For a real domain and automatic HTTPS, use the Caddy example:
 
 ```bash
 cd hosting/caddy-compose
-# edit Caddyfile and replace agentbox.example.com with your domain
+# edit Caddyfile and replace composery.example.com with your domain
 docker compose up -d
 ```
 
@@ -32,14 +32,14 @@ On first visit, the browser registration flow creates the initial password. If
 you deliberately want an environment-managed password instead, set code-server's
 standard `PASSWORD` or `HASHED_PASSWORD` variable in Compose.
 
-Agentbox does not define `AGENTBOX_*` runtime wrappers around code-server
+Composery does not define `COMPOSERY_*` runtime wrappers around code-server
 settings. Use code-server environment variables directly.
 
 ## Deployment Shape
 
-Agentbox currently needs:
+Composery currently needs:
 
-- one Agentbox container;
+- one Composery container;
 - one persistent volume mounted at `/data`;
 - one HTTP edge, usually Caddy, nginx, Traefik, or a platform proxy;
 - root inside the container so `persistd` can rebuild the filesystem on boot.
@@ -47,5 +47,5 @@ Agentbox currently needs:
 The production cloud repo deploys this shape on Hetzner VPSes with Docker Compose
 and Caddy.
 
-Do not run multiple Agentbox containers against the same `/data` volume. `persistd`
+Do not run multiple Composery containers against the same `/data` volume. `persistd`
 is a single-writer filesystem delta daemon.

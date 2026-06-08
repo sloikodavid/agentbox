@@ -38,7 +38,7 @@ function parseMimeDefaults(content: string): Map<string, string> {
 describe("desktop URL and text editor integration", () => {
 	test("uses a dedicated URL handler for HTTP links", () => {
 		const entry = parseDesktopEntry(
-			readRepoFile("rootfs/usr/share/applications/agentbox-url-handler.desktop")
+			readRepoFile("rootfs/usr/share/applications/composery-url-handler.desktop")
 		);
 
 		expect(entry.get("GenericName")).toBe("URL Handler");
@@ -52,14 +52,14 @@ describe("desktop URL and text editor integration", () => {
 	test("names the editor desktop file consistently", () => {
 		const oldPath = resolve(
 			repoRoot,
-			"rootfs/usr/share/applications/agentbox-editor.desktop"
+			"rootfs/usr/share/applications/composery-editor.desktop"
 		);
 		const newPath = resolve(
 			repoRoot,
-			"rootfs/usr/share/applications/agentbox-text-editor.desktop"
+			"rootfs/usr/share/applications/composery-text-editor.desktop"
 		);
 		const entry = parseDesktopEntry(
-			readRepoFile("rootfs/usr/share/applications/agentbox-text-editor.desktop")
+			readRepoFile("rootfs/usr/share/applications/composery-text-editor.desktop")
 		);
 
 		expect(existsSync(oldPath)).toBe(false);
@@ -74,10 +74,10 @@ describe("desktop URL and text editor integration", () => {
 		);
 
 		expect(defaults.get("x-scheme-handler/http")).toBe(
-			"agentbox-url-handler.desktop"
+			"composery-url-handler.desktop"
 		);
 		expect(defaults.get("x-scheme-handler/https")).toBe(
-			"agentbox-url-handler.desktop"
+			"composery-url-handler.desktop"
 		);
 
 		for (const mime of [
@@ -88,10 +88,10 @@ describe("desktop URL and text editor integration", () => {
 			"text/html",
 			"application/x-shellscript"
 		]) {
-			expect(defaults.get(mime)).toBe("agentbox-text-editor.desktop");
+			expect(defaults.get(mime)).toBe("composery-text-editor.desktop");
 		}
 
-		expect([...defaults.values()]).not.toContain("agentbox-editor.desktop");
+		expect([...defaults.values()]).not.toContain("composery-editor.desktop");
 	});
 
 	test("exports BROWSER at image scope instead of only interactive bash startup", () => {

@@ -34,7 +34,7 @@ impl Default for Config {
                 "/tmp".into(),
                 "/var/run".into(),
                 "/opt/persistd".into(),
-                "/opt/agentbox".into(),
+                "/opt/composery".into(),
                 "/etc/hostname".into(),
                 "/etc/hosts".into(),
                 "/etc/resolv.conf".into(),

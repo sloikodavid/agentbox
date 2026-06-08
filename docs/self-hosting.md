@@ -1,6 +1,6 @@
-# Self-Hosting Agentbox
+# Self-Hosting Composery
 
-Agentbox should feel like a small Debian-style VPS in a browser: users can install
+Composery should feel like a small Debian-style VPS in a browser: users can install
 packages, edit system files, build projects, and keep that state across restarts.
 The runtime is still a container, so persistence depends on mounting one durable
 volume at `/data`.
@@ -13,7 +13,7 @@ The closest match to the production cloud runtime is:
 - DNS `A` and `AAAA` records pointing at the VPS;
 - inbound ports `80` and `443` open;
 - Docker Compose;
-- Caddy in front of Agentbox for automatic HTTPS.
+- Caddy in front of Composery for automatic HTTPS.
 
 Use [hosting/caddy-compose](../hosting/caddy-compose/) for this setup.
 
@@ -22,10 +22,10 @@ Use [hosting/caddy-compose](../hosting/caddy-compose/) for this setup.
 | Target                                | Status            | Notes                                                                                                                                                                  |
 | ------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Docker Compose on one VPS             | Supported         | Best default for indie/self-hosted use. Use the Caddy example for HTTPS.                                                                                               |
-| Hetzner CX/CPX VPS                    | Production target | This is the production cloud target in `agentbox-cloud`.                                                                                                               |
+| Hetzner CX/CPX VPS                    | Production target | This is the production cloud target in (Composery Cloud)[https://composery.io/pricing].                                                                                                               |
 | DigitalOcean Droplet or similar VPS   | Supported         | Same Compose/Caddy shape as Hetzner.                                                                                                                                   |
 | Railway, Render, Fly, or similar PaaS | Supported         | Mount a writable persistent disk at `/data`, run a single instance per volume, and check `persistd status --json` after boot. Provider-specific setup is still manual. |
-| Kubernetes                            | Manual            | Use one replica, a PVC mounted at `/data`, and an ingress/proxy. Do not scale one Agentbox instance horizontally against the same PVC.                                 |
+| Kubernetes                            | Manual            | Use one replica, a PVC mounted at `/data`, and an ingress/proxy. Do not scale one Composery instance horizontally against the same PVC.                                 |
 
 ## Provider Notes
 
@@ -39,11 +39,11 @@ or similar host:
 3. Install Docker Compose.
 4. Copy the example, edit `Caddyfile`, and run `docker compose up -d`.
 
-This matches the runtime shape used by `agentbox-cloud`.
+This matches the runtime shape used by Composery Cloud.
 
 ### Render
 
-Deploy the Agentbox image as a Docker-backed web service, attach a persistent
+Deploy the Composery image as a Docker-backed web service, attach a persistent
 disk mounted at `/data`, and set `PORT=8080`.
 
 Use the browser registration flow to create the initial password. Set `PASSWORD`
@@ -56,7 +56,7 @@ redeploys.
 
 ### Railway
 
-Deploy the Agentbox image, attach a Railway volume with mount path `/data`, and
+Deploy the Composery image, attach a Railway volume with mount path `/data`, and
 route the public HTTP domain to target port `8080`.
 
 Use the browser registration flow to create the initial password. Set `PASSWORD`
@@ -69,19 +69,19 @@ the service starts with `persistd status --json`.
 ### Fly.io
 
 Use one Machine with one volume mounted at `/data`. Fly volumes are local to the
-Machine, so do not scale one Agentbox instance to multiple Machines unless each
+Machine, so do not scale one Composery instance to multiple Machines unless each
 Machine is treated as a separate box with its own volume.
 
 ### Kubernetes
 
 Use a single replica, a `PersistentVolumeClaim` mounted at `/data`, and an
-Ingress or Gateway for TLS. Agentbox is not currently a horizontally scalable
+Ingress or Gateway for TLS. Composery is not currently a horizontally scalable
 Kubernetes app because `persistd` is a single-writer daemon for one root
 filesystem delta.
 
 ## code-server Environment Variables
 
-Agentbox does not define `AGENTBOX_*` runtime wrappers around code-server
+Composery does not define `COMPOSERY_*` runtime wrappers around code-server
 settings. Set code-server environment variables directly in Compose or in your
 hosting provider's environment-variable UI.
 
@@ -99,7 +99,7 @@ Most useful for self-hosting:
 | `LOG_LEVEL`                 | Sets code-server logging to `trace`, `debug`, `info`, `warn`, or `error`.                                                                |
 | `GITHUB_TOKEN`              | Supplies code-server's GitHub auth token. Treat it as a secret; code-server removes it from the child-process environment after startup. |
 
-Accepted by code-server but usually less important for Agentbox:
+Accepted by code-server but usually less important for Composery:
 
 | Variable                                                 | Use                                                                                                         |
 | -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
@@ -130,7 +130,7 @@ Excluded by default:
 
 - `/data`;
 - `/run`, `/var/run`, `/proc`, `/sys`, `/dev`, and `/tmp`;
-- `/opt/persistd` and `/opt/agentbox`;
+- `/opt/persistd` and `/opt/composery`;
 - resolver and hostname files: `/etc/hosts`, `/etc/hostname`, `/etc/resolv.conf`.
 
 The active config lives at `/data/persistd/config.json`. Self-hosters may edit the
@@ -152,7 +152,7 @@ route. If `persistd apply` fails during boot, code-server does not become ready.
 
 ## Security
 
-Agentbox is intentionally root-capable inside the container because it is meant to
+Composery is intentionally root-capable inside the container because it is meant to
 feel like a mutable Linux system. Treat the browser password and reverse proxy as
 the security boundary for self-hosted use:
 

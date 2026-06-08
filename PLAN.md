@@ -19,14 +19,14 @@ The goal is a clean, open, image-delta persistence system for container images.
 Before coding, read these files in this order:
 
 1. `PLAN.md`.
-2. `C:\Users\sloik\Documents\Projects\agentbox\.agents\skills\grill\SKILL.md`.
-3. `C:\Users\sloik\Documents\Projects\agentbox\.agents\skills\research\SKILL.md`.
-4. `C:\Users\sloik\Documents\Projects\agentbox\.agents\skills\refactor\SKILL.md`.
-5. `C:\Users\sloik\Documents\Projects\agentbox\.agents\skills\list\SKILL.md`.
+2. `C:\Users\sloik\Documents\Projects\composery\.agents\skills\grill\SKILL.md`.
+3. `C:\Users\sloik\Documents\Projects\composery\.agents\skills\research\SKILL.md`.
+4. `C:\Users\sloik\Documents\Projects\composery\.agents\skills\refactor\SKILL.md`.
+5. `C:\Users\sloik\Documents\Projects\composery\.agents\skills\list\SKILL.md`.
 6. `C:\Users\sloik\Documents\Projects\deployery\packages\docker\linux\opt\deployery\core\src\persistence.ts`.
 7. `C:\Users\sloik\Documents\Projects\deployery\packages\docker\linux\opt\deployery\core\src\persistence-paths.ts`.
-8. `C:\Users\sloik\Documents\Projects\agentbox\packages\persistd\internal\restore\restore_test.go`.
-9. `C:\Users\sloik\Documents\Projects\agentbox\packages\persistd\internal\watch\watcher_linux.go`.
+8. `C:\Users\sloik\Documents\Projects\composery\packages\persistd\internal\restore\restore_test.go`.
+9. `C:\Users\sloik\Documents\Projects\composery\packages\persistd\internal\watch\watcher_linux.go`.
 
 The Deployery files are reference material only.
 
@@ -615,7 +615,7 @@ Default exclusions in the config file must include at least:
 - `/tmp`.
 - `/var/run`.
 - `/opt/persistd`.
-- `/opt/agentbox`.
+- `/opt/composery`.
 - runtime files such as `/etc/hostname`, `/etc/hosts`, `/etc/resolv.conf`.
 
 Review current Go defaults before deciding final default exclusions.

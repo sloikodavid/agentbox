@@ -21,7 +21,7 @@
 
 .keybindings-editor
 	> .keybindings-body
-	> .agentbox-keybindings-scrollbar {
+	> .composery-keybindings-scrollbar {
 	position: absolute;
 	left: 0;
 	right: 0;
@@ -33,13 +33,13 @@
 
 .keybindings-editor
 	> .keybindings-body
-	> .agentbox-keybindings-scrollbar.hidden {
+	> .composery-keybindings-scrollbar.hidden {
 	display: none;
 }
 
 .keybindings-editor
 	> .keybindings-body
-	> .agentbox-keybindings-scrollbar
+	> .composery-keybindings-scrollbar
 	> .slider {
 	position: absolute;
 	top: 0;
@@ -52,14 +52,14 @@
 
 .keybindings-editor
 	> .keybindings-body
-	> .agentbox-keybindings-scrollbar
+	> .composery-keybindings-scrollbar
 	> .slider:hover {
 	background: var(--vscode-scrollbarSlider-hoverBackground);
 }
 
 .keybindings-editor
 	> .keybindings-body
-	> .agentbox-keybindings-scrollbar
+	> .composery-keybindings-scrollbar
 	> .slider.active {
 	background: var(--vscode-scrollbarSlider-activeBackground);
 }
@@ -139,7 +139,7 @@
 		display: none !important;
 	}
 
-	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+	.monaco-modal-editor-block[data-composery-mobile-maximized="true"]
 		> .modal-editor-resizable {
 		box-sizing: border-box !important;
 		left: 8px !important;
@@ -148,24 +148,24 @@
 		max-width: calc(100vw - 16px) !important;
 	}
 
-	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+	.monaco-modal-editor-block[data-composery-mobile-maximized="true"]
 		.modal-editor-header {
 		grid-template-columns: auto minmax(0, 1fr) auto auto;
 	}
 
-	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+	.monaco-modal-editor-block[data-composery-mobile-maximized="true"]
 		.modal-editor-title,
-	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+	.monaco-modal-editor-block[data-composery-mobile-maximized="true"]
 		.modal-editor-action-container {
 		min-width: 0;
 	}
 
-	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+	.monaco-modal-editor-block[data-composery-mobile-maximized="true"]
 		.modal-editor-action-container,
-	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+	.monaco-modal-editor-block[data-composery-mobile-maximized="true"]
 		.modal-editor-action-container
 		> .monaco-toolbar,
-	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+	.monaco-modal-editor-block[data-composery-mobile-maximized="true"]
 		.modal-editor-action-container
 		> .monaco-toolbar
 		> .monaco-action-bar {
@@ -173,7 +173,7 @@
 		justify-content: flex-end;
 	}
 
-	.monaco-modal-editor-block[data-agentbox-mobile-maximized="true"]
+	.monaco-modal-editor-block[data-composery-mobile-maximized="true"]
 		.modal-editor-action-container
 		.monaco-action-bar
 		> .actions-container {
