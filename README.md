@@ -21,7 +21,7 @@ For a real domain and automatic HTTPS, use the Caddy example:
 
 ```bash
 cd hosting/caddy-compose
-# edit Caddyfile and replace composery.example.com with your domain
+# edit Caddyfile and replace example.com with your domain
 docker compose up -d
 ```
 
