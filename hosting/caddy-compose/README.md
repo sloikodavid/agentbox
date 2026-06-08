@@ -11,13 +11,14 @@ This example runs Agentbox behind Caddy with automatic HTTPS.
 ## Run
 
 ```bash
-# edit Caddyfile and replace agentbox.example.com with your domain
+# edit Caddyfile and replace example.com with your domain
+# optionally uncomment the PASSWORD environment to pre-register
 docker compose up -d
 ```
 
 Open `https://<your-domain>`.
 
-On first visit, register the initial Agentbox password in the browser. To pin a
+On first visit, register the initial Agentbox password in the browser if you didn't already set the `PASSWORD` environment variable. To pin a
 specific image version, edit `compose.yml` and replace the `agentbox` image tag
 with the version or digest you want to run.
 

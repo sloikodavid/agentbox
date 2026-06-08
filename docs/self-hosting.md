@@ -15,7 +15,7 @@ The closest match to the production cloud runtime is:
 - Docker Compose;
 - Caddy in front of Agentbox for automatic HTTPS.
 
-Use [hosting/docker-caddy](../hosting/docker-caddy/) for this setup.
+Use [hosting/caddy-compose](../hosting/caddy-compose/) for this setup.
 
 ## Deployment Targets
 
@@ -31,7 +31,7 @@ Use [hosting/docker-caddy](../hosting/docker-caddy/) for this setup.
 
 ### VPS Providers
 
-Use [hosting/docker-caddy](../hosting/docker-caddy/) on a Droplet, Hetzner VPS,
+Use [hosting/caddy-compose](../hosting/caddy-compose/) on a Droplet, Hetzner VPS,
 or similar host:
 
 1. Point DNS at the server.

@@ -38,7 +38,7 @@ description: Use when you're not sure where to look, need to find the right file
 docs/
   self-hosting.md
 hosting/
-  docker-caddy/
+  caddy-compose/
     Caddyfile
     compose.yml
     README.md

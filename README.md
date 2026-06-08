@@ -20,7 +20,7 @@ the container to a network.
 For a real domain and automatic HTTPS, use the Caddy example:
 
 ```bash
-cd hosting/docker-caddy
+cd hosting/caddy-compose
 # edit Caddyfile and replace agentbox.example.com with your domain
 docker compose up -d
 ```

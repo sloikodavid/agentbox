@@ -1,4 +1,4 @@
-agentbox.example.com {
+example.com {
 	encode gzip
 	reverse_proxy agentbox:8080
 }

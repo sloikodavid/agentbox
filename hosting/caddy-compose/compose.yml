@@ -17,8 +17,7 @@ services:
     image: ghcr.io/sloikodavid/agentbox:latest
     restart: unless-stopped
     # environment:
-    #   PASSWORD: "example123"
-    #   VSCODE_PROXY_URI: "https://{{port}}.example.com"
+    #   PASSWORD: "example"
     volumes:
       - agentbox_data:/data
     expose:
